@@ -21,8 +21,11 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@24.7.0)(happy-dom@20.5.0)
 
-  packages/core:
+  packages/cloud:
     devDependencies:
+      '@consentify/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: 24.7.0
         version: 24.7.0
@@ -33,17 +36,16 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
-  packages/gtm:
-    dependencies:
-      '@consentify/core':
-        specifier: workspace:^
-        version: link:../core
+  packages/core:
     devDependencies:
+      '@types/node':
+        specifier: 24.7.0
+        version: 24.7.0
       rimraf:
-        specifier: ^6.0.0
+        specifier: 6.0.1
         version: 6.0.1
       typescript:
-        specifier: ^5.7.0
+        specifier: 5.9.3
         version: 5.9.3
 
   packages/react:
@@ -665,6 +667,7 @@ packages:
   glob@11.0.3:
     resolution: {integrity: sha512-2Nim7dha1KVkaiF4q6Dj+ngPPMdfvLJEOpZk/jKiUAkqKebpGAWQXAq9z1xu9HKu5lWfqw/FASuccEjyznjPaA==}
     engines: {node: 20 || >=22}
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
     hasBin: true
 
   globby@11.1.0:

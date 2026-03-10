@@ -1,0 +1,80 @@
+{
+  "name": "@consentify/cloud",
+  "version": "1.0.0",
+  "description": "Cloud adapter for @consentify/core - connects consent SDK to Consentify SaaS analytics",
+  "author": {
+    "name": "Roman Denysov",
+    "url": "https://github.com/RomanDenysov"
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/RomanDenysov"
+    },
+    {
+      "type": "ko-fi",
+      "url": "https://ko-fi.com/romandenysov"
+    },
+    {
+      "type": "buymeacoffee",
+      "url": "https://buymeacoffee.com/romandenysov"
+    }
+  ],
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.12.3",
+  "keywords": [
+    "consentify",
+    "consent",
+    "analytics",
+    "cloud",
+    "cookie-consent",
+    "gdpr",
+    "ccpa",
+    "privacy"
+  ],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RomanDenysov/consentify.git",
+    "directory": "packages/cloud"
+  },
+  "bugs": {
+    "url": "https://github.com/RomanDenysov/consentify/issues"
+  },
+  "homepage": "https://github.com/RomanDenysov/consentify#readme",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@consentify/core": ">=2.0.0"
+  },
+  "devDependencies": {
+    "@consentify/core": "workspace:*",
+    "rimraf": "6.0.1",
+    "typescript": "5.9.3",
+    "@types/node": "24.7.0"
+  }
+}

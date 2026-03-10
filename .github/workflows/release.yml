@@ -5,6 +5,7 @@ on:
     tags:
       - 'core-v*'
       - 'react-v*'
+      - 'cloud-v*'
 
 jobs:
   publish:
@@ -35,5 +36,10 @@ jobs:
       - name: Publish react
         if: startsWith(github.ref, 'refs/tags/react-v')
         run: pnpm -r --filter @consentify/react publish --access public --provenance --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish cloud
+        if: startsWith(github.ref, 'refs/tags/cloud-v')
+        run: pnpm -r --filter @consentify/cloud publish --access public --provenance --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

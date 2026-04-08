@@ -23,6 +23,9 @@ pnpm -w --filter @consentify/core check
 
 # Run tests (vitest + happy-dom)
 pnpm test
+
+# Check bundle size (core < 5kb gzipped)
+pnpm run size
 ```
 
 ## Publishing
@@ -56,11 +59,14 @@ Key design patterns:
 - `'necessary'` category is always `true` and cannot be disabled
 - Storage abstraction supports cookie (canonical) and localStorage (optional mirror)
 - State uses discriminated union: `{ decision: 'unset' }` | `{ decision: 'decided', snapshot }`
+- Typed event system: `on('change', handler)` / `once('change', handler)` for reactive adapters
+- `enableDebug(instance)` - tree-shakeable debug adapter that logs consent changes via event system
 
 ### Internal utilities
 - `fnv1a()` / `stableStringify()` - deterministic policy hashing
 - `readCookie()` / `writeCookie()` - isomorphic cookie handling
 - Listener pattern for React reactivity (`listeners` Set, `syncState`, `notifyListeners`)
+- Event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`
 
 ### SSR Safety
 
@@ -68,8 +74,26 @@ Key design patterns:
 - `typeof BroadcastChannel !== 'undefined'` is **not** sufficient alone — Node.js 18+ exposes it natively; always pair with `isBrowser()`
 - Server API is cookie-header only; `client.*` methods are browser-only
 
+### Cloud Adapter (`packages/cloud`)
+
+Bridges `@consentify/core` instances to the SaaS consent analytics API:
+
+- **Entry**: `packages/cloud/src/index.ts` - `enableCloud(instance, options)` subscribes to consent changes and POSTs to `/api/consent/events`
+- **Options**: `siteId` (required), `endpoint` (API base URL), `apiKey` (optional)
+- **Publishing**: `cloud-v*` tags trigger npm release (alongside `core-v*`, `react-v*`)
+- **SaaS compatibility**: Works with the Consentify SaaS app at `https://consentify.dev/api/consent`
+
+### React Package (`packages/react`)
+
+- `useConsentify(instance)` - returns `ConsentState<T>` via `useSyncExternalStore`
+- `useConsentify(instance, category)` - returns `boolean` for a single category (overload)
+- Re-exports everything from `@consentify/core`
+
 ### Testing
 
-- Single test file: `packages/core/src/index.test.ts`
+- Test files: `packages/core/src/index.test.ts`, `packages/cloud/src/index.test.ts`, `packages/react/src/index.test.ts`
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
+- React tests use `@testing-library/react` with `renderHook`
+- Cloud tests mock `fetch` and `localStorage` via `vi.stubGlobal`
+- Bundle size enforced via `size-limit` (`pnpm run size`) - core must stay under 5kb gzipped
 - Design docs: `docs/plans/YYYY-MM-DD-<topic>-design.md`

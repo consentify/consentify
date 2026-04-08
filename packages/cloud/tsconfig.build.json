@@ -6,5 +6,6 @@
     "emitDeclarationOnly": false,
     "noEmit": false,
     "removeComments": true
-  }
+  },
+  "exclude": ["src/**/*.test.ts"]
 }

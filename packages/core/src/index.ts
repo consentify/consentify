@@ -83,6 +83,15 @@ export interface ConsentifySubscribable<T extends UserCategory> {
     getServerSnapshot: () => ConsentState<T>;
 }
 
+// --- Typed event system ---
+export interface ConsentEventMap<T extends UserCategory> {
+    change: { from: ConsentState<T>; to: ConsentState<T>; timestamp: number };
+    clear: { timestamp: number };
+}
+
+export type ConsentEventHandler<T extends UserCategory, K extends keyof ConsentEventMap<T>> =
+    (event: ConsentEventMap<T>[K]) => void;
+
 function stableStringify(o: unknown): string {
     if (o === null || typeof o !== 'object') return JSON.stringify(o);
     if (Array.isArray(o)) return `[${o.map(stableStringify).join(',')}]`;
@@ -306,6 +315,34 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     }
     // ======================================================
 
+    // ---- Typed event emitter ----
+    const eventHandlers = new Map<string, Set<(event: any) => void>>();
+
+    function emit<K extends keyof ConsentEventMap<T>>(type: K, event: ConsentEventMap<T>[K]) {
+        const handlers = eventHandlers.get(type);
+        if (!handlers) return;
+        for (const h of handlers) {
+            try { h(event); } catch (err) {
+                console.error('[consentify] Event handler threw:', err);
+            }
+        }
+    }
+
+    function on<K extends keyof ConsentEventMap<T>>(
+        type: K, handler: ConsentEventHandler<T, K>,
+    ): () => void {
+        if (!eventHandlers.has(type)) eventHandlers.set(type, new Set());
+        eventHandlers.get(type)!.add(handler);
+        return () => eventHandlers.get(type)!.delete(handler);
+    }
+
+    function once<K extends keyof ConsentEventMap<T>>(
+        type: K, handler: ConsentEventHandler<T, K>,
+    ): () => void {
+        const unsub = on(type, (e) => { unsub(); handler(e); });
+        return unsub;
+    }
+
     // ---- client API
     function clientGet(): ConsentState<T>;
     function clientGet(category: Necessary | T): boolean;
@@ -322,6 +359,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         get: clientGet,
 
         set: (choices: Partial<Choices<T>>) => {
+            const from = cachedState;
             const fresh = readClient();
             const base = fresh ? fresh.choices : normalize();
             const next: Snapshot<T> = {
@@ -333,6 +371,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
             if (changed) {
                 syncState();
                 notifyListeners();
+                emit('change', { from, to: cachedState, timestamp: Date.now() });
                 bc?.postMessage(null);
             }
         },
@@ -343,6 +382,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
             syncState();
             if (hadConsent) {
                 notifyListeners();
+                emit('clear', { timestamp: Date.now() });
                 bc?.postMessage(null);
             }
         },
@@ -422,12 +462,29 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         subscribe: client.subscribe,
         getServerSnapshot: client.getServerSnapshot,
         guard: client.guard,
+        on,
+        once,
     } as const;
 }
 
 // Common predefined category names you can reuse in your policy.
 export const defaultCategories = ['preferences','analytics','marketing','functional','unclassified'] as const;
 export type DefaultCategory = typeof defaultCategories[number];
+
+// --- Debug adapter ---
+export interface EnableDebugOptions {
+    onLog?: (message: string, event: ConsentEventMap<any>[keyof ConsentEventMap<any>]) => void;
+}
+
+export function enableDebug<T extends UserCategory>(
+    instance: { on: <K extends keyof ConsentEventMap<T>>(type: K, handler: ConsentEventHandler<T, K>) => () => void },
+    options?: EnableDebugOptions,
+): () => void {
+    const log = options?.onLog ?? ((msg: string, event: unknown) => console.log(`[consentify] ${msg}`, event));
+    const unsub1 = instance.on('change', (e) => log('Consent changed', e));
+    const unsub2 = instance.on('clear', (e) => log('Consent cleared', e));
+    return () => { unsub1(); unsub2(); };
+}
 
 // --- Google Consent Mode v2 ---
 

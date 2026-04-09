@@ -56,7 +56,7 @@
     }
   },
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "build": "rimraf dist && tsc -p tsconfig.build.json && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --outfile=dist/consentify.iife.js && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --minify --outfile=dist/consentify.iife.min.js",
     "check": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

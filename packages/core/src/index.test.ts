@@ -1,27 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createConsentify, defaultCategories, enableConsentMode, type ConsentifySubscribable, type ConsentState } from './index';
-
-// --- Exported helper access (re-implement for testing since they're not exported) ---
-
-function stableStringify(o: unknown): string {
-    if (o === null || typeof o !== 'object') return JSON.stringify(o);
-    if (Array.isArray(o)) return `[${o.map(stableStringify).join(',')}]`;
-    const e = Object.entries(o as Record<string, unknown>).sort((a, b) => a[0].localeCompare(b[0]));
-    return `{${e.map(([k, v]) => JSON.stringify(k) + ':' + stableStringify(v)).join(',')}}`;
-}
-
-function fnv1a(str: string): string {
-    let h = 0x811c9dc5 >>> 0;
-    for (let i = 0; i < str.length; i++) {
-        h ^= str.charCodeAt(i);
-        h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-    }
-    return ('00000000' + h.toString(16)).slice(-8);
-}
-
-function hashPolicy(categories: readonly string[], identifier?: string): string {
-    return fnv1a(stableStringify({ categories: [...categories].sort(), identifier: identifier ?? null }));
-}
+import { createConsentify, defaultCategories, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, type ConsentifySubscribable, type ConsentState } from './index';
 
 // Helper to encode a snapshot as document.cookie value
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o));
@@ -1050,5 +1028,220 @@ describe('multi-tab sync (BroadcastChannel)', () => {
 
         // Fires exactly once from the local notifyListeners(), not again from BroadcastChannel
         expect(listener).toHaveBeenCalledTimes(1);
+    });
+});
+
+// ============================================================
+// 17. Typed event system (on / once)
+// ============================================================
+describe('event system (on / once)', () => {
+    beforeEach(() => { clearAllCookies(); localStorage.clear(); });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('on("change") fires with from/to/timestamp on set()', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.on('change', handler);
+
+        c.client.set({ analytics: true });
+
+        expect(handler).toHaveBeenCalledOnce();
+        const event = handler.mock.calls[0][0];
+        expect(event.from).toEqual({ decision: 'unset' });
+        expect(event.to.decision).toBe('decided');
+        expect(event.to.snapshot.choices.analytics).toBe(true);
+        expect(event.timestamp).toBeTypeOf('number');
+    });
+
+    it('on("clear") fires with timestamp on clear()', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.client.set({ analytics: true });
+        const handler = vi.fn();
+        c.on('clear', handler);
+
+        c.client.clear();
+
+        expect(handler).toHaveBeenCalledOnce();
+        expect(handler.mock.calls[0][0].timestamp).toBeTypeOf('number');
+    });
+
+    it('clear does not fire event when state was already unset', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.on('clear', handler);
+
+        c.client.clear();
+
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('once("change") fires once then auto-unsubscribes', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.once('change', handler);
+
+        c.client.set({ analytics: true });
+        c.client.set({ analytics: false });
+
+        expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it('once("clear") fires once then auto-unsubscribes', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.once('clear', handler);
+
+        c.client.set({ analytics: true });
+        c.client.clear();
+        c.client.set({ analytics: true });
+        c.client.clear();
+
+        expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it('multiple once() handlers all fire exactly once', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const h1 = vi.fn();
+        const h2 = vi.fn();
+        const h3 = vi.fn();
+
+        c.once('change', h1);
+        c.once('change', h2);
+        c.once('change', h3);
+
+        c.client.set({ analytics: true });
+        c.client.set({ analytics: false });
+
+        expect(h1).toHaveBeenCalledOnce();
+        expect(h2).toHaveBeenCalledOnce();
+        expect(h3).toHaveBeenCalledOnce();
+    });
+
+    it('can unsubscribe from once() before event fires', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        const unsub = c.once('change', handler);
+
+        unsub();
+        c.client.set({ analytics: true });
+
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('unsubscribe from on() stops handler', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        const unsub = c.on('change', handler);
+
+        unsub();
+        c.client.set({ analytics: true });
+
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('handler error does not break other handlers', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const bad = vi.fn(() => { throw new Error('boom'); });
+        const good = vi.fn();
+
+        c.on('change', bad);
+        c.on('change', good);
+
+        c.client.set({ analytics: true });
+
+        expect(bad).toHaveBeenCalledOnce();
+        expect(good).toHaveBeenCalledOnce();
+    });
+
+    it('multiple handlers on same event all fire', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const h1 = vi.fn();
+        const h2 = vi.fn();
+        const h3 = vi.fn();
+
+        c.on('change', h1);
+        c.on('change', h2);
+        c.on('change', h3);
+
+        c.client.set({ analytics: true });
+
+        expect(h1).toHaveBeenCalledOnce();
+        expect(h2).toHaveBeenCalledOnce();
+        expect(h3).toHaveBeenCalledOnce();
+    });
+
+    it('change event captures correct from state on sequential changes', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
+        const handler = vi.fn();
+        c.on('change', handler);
+
+        c.client.set({ analytics: true });
+        c.client.set({ marketing: true });
+
+        expect(handler).toHaveBeenCalledTimes(2);
+        // First call: unset -> analytics:true
+        expect(handler.mock.calls[0][0].from.decision).toBe('unset');
+        // Second call: decided -> decided (with marketing added)
+        expect(handler.mock.calls[1][0].from.decision).toBe('decided');
+        expect(handler.mock.calls[1][0].to.snapshot.choices.marketing).toBe(true);
+    });
+});
+
+// ============================================================
+// 18. enableDebug adapter
+// ============================================================
+describe('enableDebug', () => {
+    beforeEach(() => { clearAllCookies(); localStorage.clear(); });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('logs on change with default logger', () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        enableDebug(c);
+
+        c.client.set({ analytics: true });
+
+        expect(logSpy).toHaveBeenCalledWith(
+            expect.stringContaining('[consentify] Consent changed'),
+            expect.objectContaining({ timestamp: expect.any(Number) }),
+        );
+        logSpy.mockRestore();
+    });
+
+    it('logs on clear with default logger', () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        enableDebug(c);
+        c.client.set({ analytics: true });
+        logSpy.mockClear();
+
+        c.client.clear();
+
+        expect(logSpy).toHaveBeenCalledWith(
+            expect.stringContaining('[consentify] Consent cleared'),
+            expect.objectContaining({ timestamp: expect.any(Number) }),
+        );
+        logSpy.mockRestore();
+    });
+
+    it('custom onLog handler receives events', () => {
+        const onLog = vi.fn();
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        enableDebug(c, { onLog });
+
+        c.client.set({ analytics: true });
+
+        expect(onLog).toHaveBeenCalledWith('Consent changed', expect.objectContaining({ timestamp: expect.any(Number) }));
+    });
+
+    it('unsubscribe stops logging', () => {
+        const onLog = vi.fn();
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const unsub = enableDebug(c, { onLog });
+
+        unsub();
+        c.client.set({ analytics: true });
+
+        expect(onLog).not.toHaveBeenCalled();
     });
 });

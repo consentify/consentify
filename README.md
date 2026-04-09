@@ -265,6 +265,8 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `guard` | `(category, onGrant, onRevoke?) => () => void` | Run code when consent is granted; optionally handle revocation. Returns a dispose function |
 | `subscribe` | `(cb: () => void) => () => void` | Subscribe to changes (React-compatible) |
 | `getServerSnapshot` | `() => ConsentState<T>` | Always returns `{ decision: 'unset' }` for SSR |
+| `on` | `(type, handler) => () => void` | Subscribe to typed events (`'change'`, `'clear'`). Returns unsubscribe |
+| `once` | `(type, handler) => () => void` | One-time event listener, auto-unsubscribes after first call |
 
 ### Server / Client Namespaces (advanced)
 
@@ -294,14 +296,90 @@ Wires Google Consent Mode v2 to a consent instance. Returns a dispose function.
 
 Google consent types: `ad_storage`, `ad_user_data`, `ad_personalization`, `analytics_storage`, `functionality_storage`, `personalization_storage`, `security_storage`.
 
-### `useConsentify(instance)` (React)
+### `enableDebug(instance, options?)`
+
+Tree-shakeable debug adapter that logs consent changes. Unused imports are removed by bundlers.
+
+```ts
+import { enableDebug } from '@consentify/core';
+
+const dispose = enableDebug(consent);
+// [consentify] Consent changed { from: ..., to: ..., timestamp: ... }
+// [consentify] Consent cleared { timestamp: ... }
+
+// Custom logger
+enableDebug(consent, {
+  onLog: (message, event) => myLogger.info(message, event),
+});
+```
+
+### `enableCloud(instance, options)`
+
+Connects consent changes to the Consentify SaaS analytics API (or any custom endpoint).
+
+```ts
+import { enableCloud } from '@consentify/cloud';
+
+const dispose = enableCloud(consent, {
+  siteId: 'your-site-id',
+  apiKey: 'sk_live_...',         // optional
+  endpoint: 'https://consentify.dev/api',  // default
+});
+```
+
+### Typed Events
+
+Subscribe to consent lifecycle events with typed payloads:
+
+```ts
+consent.on('change', (event) => {
+  console.log(event.from);      // previous ConsentState
+  console.log(event.to);        // new ConsentState
+  console.log(event.timestamp); // Date.now()
+});
+
+consent.on('clear', (event) => {
+  console.log(event.timestamp);
+});
+
+// One-time listener
+consent.once('change', (event) => {
+  // fires once, then auto-unsubscribes
+});
+```
+
+### `useConsentify(instance, category?)` (React)
 
 ```ts
 import { useConsentify } from '@consentify/react';
 
+// Full state
 const state = useConsentify(consent);
 // state: { decision: 'unset' } | { decision: 'decided', snapshot: Snapshot<T> }
+
+// Boolean for a single category
+const analyticsGranted = useConsentify(consent, 'analytics');
+// analyticsGranted: boolean
 ```
+
+### Script Tag / IIFE
+
+For non-bundled apps (WordPress, static sites), use the IIFE build:
+
+```html
+<script src="https://unpkg.com/@consentify/core/dist/consentify.iife.min.js"></script>
+<script>
+  var consent = Consentify.createConsentify({
+    policy: { categories: ['analytics', 'marketing'] }
+  });
+
+  consent.guard('analytics', function() {
+    // Load analytics script
+  });
+</script>
+```
+
+The IIFE bundle is 2.92kb gzipped and exposes all exports on the `Consentify` global.
 
 ### Policy Versioning
 
@@ -313,6 +391,7 @@ The `'necessary'` category is always `true` and cannot be disabled. When you cha
 |---------|-------------|
 | [@consentify/core](./packages/core) | Headless consent SDK -- TypeScript-first, SSR-safe, zero dependencies |
 | [@consentify/react](./packages/react) | React hook for @consentify/core |
+| [@consentify/cloud](./packages/cloud) | Cloud analytics adapter -- connects consent events to Consentify SaaS |
 
 ## Coming Soon: Consentify SaaS
 
@@ -327,7 +406,7 @@ A hosted consent management platform with a visual banner editor, analytics dash
 
 ## Roadmap
 
-- `@consentify/next` -- Next.js middleware with automatic cookie handling
+- SaaS bidirectional sync -- fetch policy config from Consentify SaaS dashboard
 - Geo-aware consent defaults -- show banners only where required
 
 ## Support

@@ -21,11 +21,7 @@ export function useConsentify<T extends UserCategory>(
   );
 
   if (typeof category !== 'undefined') {
-    if (category === 'necessary') return true;
-    if (state.decision === 'decided') {
-      return !!(state.snapshot.choices as Record<string, boolean>)[category];
-    }
-    return false;
+    return instance.isGranted!(category);
   }
 
   return state;

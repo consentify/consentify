@@ -1,6 +1,6 @@
 {
   "name": "@consentify/core",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Headless cookie consent SDK - zero dependencies, TypeScript-first, SSR-safe.",
   "author": {
     "name": "Roman Denysov",

@@ -140,6 +140,7 @@ export function hashPolicy(categories: readonly string[], identifier?: string): 
     return fnv1a(stableStringify({ categories: [...categories].sort(), identifier: identifier ?? null}));
 }
 // --- Internals ---
+const MS_PER_DAY = 86_400_000; // 24 * 60 * 60 * 1000
 const DEFAULT_COOKIE = 'consentify';
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o));
 const dec = <T>(s: string) => { try { return JSON.parse(decodeURIComponent(s)) as T; } catch { return null; } };
@@ -203,7 +204,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         if (!consentMaxAgeDays) return false;
         const givenTime = new Date(givenAt).getTime();
         if (isNaN(givenTime)) return true; // Invalid date = expired
-        const maxAgeMs = consentMaxAgeDays * 24 * 60 * 60 * 1000;
+        const maxAgeMs = consentMaxAgeDays * MS_PER_DAY;
         return Date.now() - givenTime > maxAgeMs;
     };
 
@@ -381,8 +382,8 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         if (givenAt === expiringEmittedForGivenAt) return;
         const givenMs = new Date(givenAt).getTime();
         if (isNaN(givenMs)) return;
-        const expiresMs = givenMs + consentMaxAgeDays * 24 * 60 * 60 * 1000;
-        const daysRemaining = (expiresMs - Date.now()) / (24 * 60 * 60 * 1000);
+        const expiresMs = givenMs + consentMaxAgeDays * MS_PER_DAY;
+        const daysRemaining = (expiresMs - Date.now()) / (MS_PER_DAY);
         if (daysRemaining > 0 && daysRemaining <= expirationWarningDays) {
             expiringEmittedForGivenAt = givenAt;
             emit('expiring', { expiresAt: expiresMs, daysRemaining, timestamp: Date.now() });
@@ -440,6 +441,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
             const hadConsent = cachedState.decision === 'decided';
             for (const k of new Set<StorageKind>([...storageOrder, 'cookie'])) clearStore(k);
             syncState();
+            expiringEmittedForGivenAt = '';
             if (hadConsent) {
                 notifyListeners();
                 emit('clear', { timestamp: Date.now() });
@@ -505,19 +507,20 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         client.clear();
     }
 
+    function flatBulkSet(grant: boolean): void;
+    function flatBulkSet(grant: boolean, cookieHeader: string): string;
+    function flatBulkSet(grant: boolean, cookieHeader?: string): string | void {
+        if (typeof cookieHeader === 'string') return server.set(allChoices(grant), cookieHeader);
+        client.set(allChoices(grant));
+    }
+
     function flatAcceptAll(): void;
     function flatAcceptAll(cookieHeader: string): string;
-    function flatAcceptAll(cookieHeader?: string): string | void {
-        if (typeof cookieHeader === 'string') return server.set(allChoices(true), cookieHeader);
-        client.set(allChoices(true));
-    }
+    function flatAcceptAll(cookieHeader?: string): string | void { return flatBulkSet(true, cookieHeader as any); }
 
     function flatRejectAll(): void;
     function flatRejectAll(cookieHeader: string): string;
-    function flatRejectAll(cookieHeader?: string): string | void {
-        if (typeof cookieHeader === 'string') return server.set(allChoices(false), cookieHeader);
-        client.set(allChoices(false));
-    }
+    function flatRejectAll(cookieHeader?: string): string | void { return flatBulkSet(false, cookieHeader as any); }
 
     function flatGetProof(): ConsentProof<T> | null;
     function flatGetProof(cookieHeader: string): ConsentProof<T> | null;
@@ -613,7 +616,7 @@ function safeGtag(...args: unknown[]): void {
 }
 
 export function enableConsentMode<T extends string>(
-  instance: ConsentifySubscribable<T>,
+  instance: ConsentifySubscribable<T> & { mode?: ConsentMode },
   options: ConsentModeOptions<T>,
 ): () => void {
   if (typeof window === 'undefined') return () => {};
@@ -639,7 +642,7 @@ export function enableConsentMode<T extends string>(
         granted = true;
       } else if (state.decision === 'decided') {
         granted = !!(state.snapshot.choices as Record<string, boolean>)[category];
-      } else if ((instance as any).mode === 'opt-out') {
+      } else if (instance.mode === 'opt-out') {
         granted = true;
       }
 

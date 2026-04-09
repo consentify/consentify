@@ -1,6 +1,6 @@
 {
   "name": "@consentify/cloud",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cloud adapter for @consentify/core - connects consent SDK to Consentify SaaS analytics",
   "author": {
     "name": "Roman Denysov",

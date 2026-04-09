@@ -1,7 +1,7 @@
 {
-  "name": "@consentify/core",
-  "version": "2.1.0",
-  "description": "Minimal headless cookie consent SDK (TypeScript, SSR-ready, lazy-init).",
+  "name": "@consentify/ui",
+  "version": "1.0.0",
+  "description": "Headless React components for @consentify/core",
   "author": {
     "name": "Roman Denysov",
     "url": "https://github.com/RomanDenysov"
@@ -26,24 +26,22 @@
   },
   "packageManager": "pnpm@9.12.3",
   "keywords": [
-    "cookie",
+    "consentify",
     "consent",
     "cookie-consent",
-    "cookie-banner",
-    "consent-management",
     "gdpr",
     "ccpa",
-    "eprivacy",
     "privacy",
     "headless",
-    "ssr",
-    "typescript"
+    "react",
+    "components",
+    "consent-gate"
   ],
   "sideEffects": false,
   "repository": {
     "type": "git",
     "url": "git+https://github.com/RomanDenysov/consentify.git",
-    "directory": "packages/core"
+    "directory": "packages/ui"
   },
   "bugs": {
     "url": "https://github.com/RomanDenysov/consentify/issues"
@@ -56,7 +54,7 @@
     }
   },
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --outfile=dist/consentify.iife.js && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --minify --outfile=dist/consentify.iife.min.js",
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -72,9 +70,21 @@
   "publishConfig": {
     "access": "public"
   },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "@consentify/core": ">=2.0.0"
+  },
+  "dependencies": {
+    "@consentify/core": "workspace:^"
+  },
   "devDependencies": {
-    "rimraf": "6.0.1",
-    "typescript": "5.9.3",
-    "@types/node": "24.7.0"
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "19.2.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.7.0"
   }
 }

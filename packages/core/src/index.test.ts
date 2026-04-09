@@ -1097,7 +1097,7 @@ describe('event system (on / once)', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('once() fires once then auto-unsubscribes', () => {
+    it('once("change") fires once then auto-unsubscribes', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         const handler = vi.fn();
         c.once('change', handler);
@@ -1106,6 +1106,48 @@ describe('event system (on / once)', () => {
         c.client.set({ analytics: false });
 
         expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it('once("clear") fires once then auto-unsubscribes', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.once('clear', handler);
+
+        c.client.set({ analytics: true });
+        c.client.clear();
+        c.client.set({ analytics: true });
+        c.client.clear();
+
+        expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it('multiple once() handlers all fire exactly once', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const h1 = vi.fn();
+        const h2 = vi.fn();
+        const h3 = vi.fn();
+
+        c.once('change', h1);
+        c.once('change', h2);
+        c.once('change', h3);
+
+        c.client.set({ analytics: true });
+        c.client.set({ analytics: false });
+
+        expect(h1).toHaveBeenCalledOnce();
+        expect(h2).toHaveBeenCalledOnce();
+        expect(h3).toHaveBeenCalledOnce();
+    });
+
+    it('can unsubscribe from once() before event fires', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        const unsub = c.once('change', handler);
+
+        unsub();
+        c.client.set({ analytics: true });
+
+        expect(handler).not.toHaveBeenCalled();
     });
 
     it('unsubscribe from on() stops handler', () => {

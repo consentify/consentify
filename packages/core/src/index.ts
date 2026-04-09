@@ -316,6 +316,8 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     // ======================================================
 
     // ---- Typed event emitter ----
+    // Handlers are typed at the on()/emit() boundary; the Map stores the union since
+    // TypeScript can't express per-key handler types in a single Map.
     const eventHandlers = new Map<string, Set<(event: any) => void>>();
 
     function emit<K extends keyof ConsentEventMap<T>>(type: K, event: ConsentEventMap<T>[K]) {
@@ -472,13 +474,13 @@ export const defaultCategories = ['preferences','analytics','marketing','functio
 export type DefaultCategory = typeof defaultCategories[number];
 
 // --- Debug adapter ---
-export interface EnableDebugOptions {
-    onLog?: (message: string, event: ConsentEventMap<any>[keyof ConsentEventMap<any>]) => void;
+export interface EnableDebugOptions<T extends UserCategory = UserCategory> {
+    onLog?: (message: string, event: ConsentEventMap<T>[keyof ConsentEventMap<T>]) => void;
 }
 
 export function enableDebug<T extends UserCategory>(
     instance: { on: <K extends keyof ConsentEventMap<T>>(type: K, handler: ConsentEventHandler<T, K>) => () => void },
-    options?: EnableDebugOptions,
+    options?: EnableDebugOptions<T>,
 ): () => void {
     const log = options?.onLog ?? ((msg: string, event: unknown) => console.log(`[consentify] ${msg}`, event));
     const unsub1 = instance.on('change', (e) => log('Consent changed', e));

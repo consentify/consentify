@@ -1504,20 +1504,25 @@ describe('expiring event', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('fires once per consent cycle, resets on new consent', () => {
+    it('fires once per consent cycle, resets after clear and re-consent', () => {
         const c = createConsentify({
-            policy: { categories: ['analytics', 'marketing'] as const },
+            policy: { categories: ['analytics'] as const },
             consentMaxAgeDays: 30,
             expirationWarningDays: 31,
         });
         const handler = vi.fn();
         c.on('expiring', handler);
 
-        c.set({ analytics: true, marketing: false });
+        c.set({ analytics: true });
         expect(handler).toHaveBeenCalledTimes(1);
 
-        // Changing choices creates a new givenAt - fires again
-        c.set({ analytics: false, marketing: true });
+        // Same consent cycle - dedup prevents re-emit
+        c.set({ analytics: true });
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        // Clear resets the dedup tracker
+        c.clear();
+        c.set({ analytics: true });
         expect(handler).toHaveBeenCalledTimes(2);
     });
 

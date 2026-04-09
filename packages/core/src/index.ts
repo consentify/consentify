@@ -403,7 +403,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     let bc: BroadcastChannel | null = null;
     if (isBrowser() && typeof BroadcastChannel !== 'undefined') {
         bc = new BroadcastChannel(`consentify:${cookieName}`);
-        bc.onmessage = () => { syncState(); notifyListeners(); checkExpiring(); };
+        bc.onmessage = () => { try { syncState(); notifyListeners(); checkExpiring(); } catch (err) { console.error('[consentify] BroadcastChannel sync failed:', err); } };
     }
     // ======================================================
 

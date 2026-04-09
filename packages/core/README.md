@@ -200,6 +200,10 @@ createConsentify({
   },
   // Consent validity (when to re-prompt user)
   consentMaxAgeDays: 365,         // Optional: re-consent after N days
+  // Consent mode: 'opt-in' (GDPR, default) or 'opt-out' (CCPA)
+  mode: 'opt-in',                 // 'opt-in' | 'opt-out'
+  // Days before expiry to emit 'expiring' event (requires consentMaxAgeDays)
+  expirationWarningDays: 30,      // Default: 30
   // Cookie storage settings (browser retention)
   cookie: {
     name: 'consent',              // Default: 'consentify'
@@ -223,10 +227,13 @@ Returns an object with `policy`, `client`, and `server` properties.
 
 | Method | Description |
 |--------|-------------|
-| `get()` | Returns `ConsentState` — `{ decision: 'decided', snapshot }` or `{ decision: 'unset' }` |
-| `get(category)` | Returns `boolean` — `true` if category is consented (`'necessary'` always returns `true`) |
+| `get()` | Returns `ConsentState` - `{ decision: 'decided', snapshot }` or `{ decision: 'unset' }` |
+| `get(category)` | Returns `boolean` - `true` if category is consented (`'necessary'` always returns `true`) |
 | `set(choices)` | Merges choices and persists; notifies subscribers if changed |
 | `clear()` | Removes stored consent; notifies subscribers |
+| `acceptAll()` | Sets all user categories to `true` |
+| `rejectAll()` | Sets all user categories to `false` (necessary stays `true`) |
+| `getProof()` | Returns `ConsentProof` with tamper-evident signature, or `null` if unset |
 | `subscribe(cb)` | Subscribe to changes; returns unsubscribe function |
 | `getServerSnapshot()` | Returns `{ decision: 'unset' }` for SSR hydration |
 
@@ -264,6 +271,53 @@ const defaultCategories = [
   'functional',    // Enhanced functionality
   'unclassified',  // Uncategorized cookies
 ] as const;
+```
+
+### Consent Mode (opt-in / opt-out)
+
+```ts
+// GDPR (default): categories denied until user consents
+const gdpr = createConsentify({
+  policy: { categories: ['analytics'] as const },
+  mode: 'opt-in',
+});
+gdpr.isGranted('analytics'); // false (until user consents)
+
+// CCPA: categories granted until user opts out
+const ccpa = createConsentify({
+  policy: { categories: ['analytics'] as const },
+  mode: 'opt-out',
+});
+ccpa.isGranted('analytics'); // true (until user opts out)
+```
+
+### Consent Proof (Audit Trail)
+
+```ts
+consent.set({ analytics: true, marketing: false });
+
+const proof = consent.getProof();
+// { policy: '...', givenAt: '2026-...', choices: {...}, signature: 'a1b2c3d4' }
+
+// Server-side
+const proof = consent.getProof(cookieHeader);
+```
+
+The `signature` is an FNV1a hash of the proof body for tamper evidence.
+
+### Expiration Warning
+
+```ts
+const consent = createConsentify({
+  policy: { categories: ['analytics'] as const },
+  consentMaxAgeDays: 365,
+  expirationWarningDays: 30,
+});
+
+consent.on('expiring', (event) => {
+  console.log(`Consent expires in ${event.daysRemaining.toFixed(0)} days`);
+  // Show re-consent prompt
+});
 ```
 
 ## How It Works

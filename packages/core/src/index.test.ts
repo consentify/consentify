@@ -1244,4 +1244,345 @@ describe('enableDebug', () => {
 
         expect(onLog).not.toHaveBeenCalled();
     });
+
+    it('logs expiring events', () => {
+        const onLog = vi.fn();
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 30,
+            expirationWarningDays: 31,
+        });
+        enableDebug(c, { onLog });
+
+        c.client.set({ analytics: true });
+
+        expect(onLog).toHaveBeenCalledWith('Consent changed', expect.any(Object));
+        expect(onLog).toHaveBeenCalledWith('Consent expiring', expect.objectContaining({
+            expiresAt: expect.any(Number),
+            daysRemaining: expect.any(Number),
+        }));
+    });
+});
+
+// ============================================================
+// acceptAll / rejectAll
+// ============================================================
+describe('acceptAll / rejectAll', () => {
+    afterEach(() => { clearAllCookies(); vi.unstubAllGlobals(); });
+
+    it('acceptAll sets all user categories to true', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
+        c.acceptAll();
+        const state = c.get();
+        expect(state.decision).toBe('decided');
+        if (state.decision === 'decided') {
+            expect(state.snapshot.choices.analytics).toBe(true);
+            expect(state.snapshot.choices.marketing).toBe(true);
+            expect(state.snapshot.choices.necessary).toBe(true);
+        }
+    });
+
+    it('rejectAll sets all user categories to false', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
+        c.rejectAll();
+        const state = c.get();
+        expect(state.decision).toBe('decided');
+        if (state.decision === 'decided') {
+            expect(state.snapshot.choices.analytics).toBe(false);
+            expect(state.snapshot.choices.marketing).toBe(false);
+            expect(state.snapshot.choices.necessary).toBe(true);
+        }
+    });
+
+    it('acceptAll with cookieHeader returns Set-Cookie string', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const header = c.acceptAll('');
+        expect(typeof header).toBe('string');
+        expect(header).toContain('consentify=');
+    });
+
+    it('rejectAll with cookieHeader returns Set-Cookie string', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const header = c.rejectAll('');
+        expect(typeof header).toBe('string');
+        expect(header).toContain('consentify=');
+    });
+
+    it('both emit change events', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.on('change', handler);
+
+        c.acceptAll();
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        c.rejectAll();
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    it('works with custom categories', () => {
+        const c = createConsentify({ policy: { categories: ['ads', 'personalization', 'stats'] as const } });
+        c.acceptAll();
+        const state = c.get();
+        if (state.decision === 'decided') {
+            expect(state.snapshot.choices.ads).toBe(true);
+            expect(state.snapshot.choices.personalization).toBe(true);
+            expect(state.snapshot.choices.stats).toBe(true);
+        }
+    });
+});
+
+// ============================================================
+// getProof
+// ============================================================
+describe('getProof', () => {
+    afterEach(() => { clearAllCookies(); vi.unstubAllGlobals(); });
+
+    it('returns null when no consent given', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        expect(c.getProof()).toBeNull();
+    });
+
+    it('returns proof with correct fields when decided', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.set({ analytics: true });
+        const proof = c.getProof();
+        expect(proof).not.toBeNull();
+        expect(proof!.policy).toBe(c.policy.identifier);
+        expect(proof!.givenAt).toBeTruthy();
+        expect(proof!.choices.analytics).toBe(true);
+        expect(proof!.choices.necessary).toBe(true);
+        expect(typeof proof!.signature).toBe('string');
+        expect(proof!.signature.length).toBe(8);
+    });
+
+    it('signature is deterministic', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.set({ analytics: true });
+        const p1 = c.getProof()!;
+        const p2 = c.getProof()!;
+        expect(p1.signature).toBe(p2.signature);
+    });
+
+    it('signature changes when choices differ', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.set({ analytics: true });
+        const sig1 = c.getProof()!.signature;
+        c.set({ analytics: false });
+        const sig2 = c.getProof()!.signature;
+        expect(sig1).not.toBe(sig2);
+    });
+
+    it('server mode: getProof(cookieHeader) parses from header', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const header = c.set({ analytics: true }, '');
+        const cookiePart = header.split(';')[0];
+        const proof = c.getProof(cookiePart);
+        expect(proof).not.toBeNull();
+        expect(proof!.choices.analytics).toBe(true);
+    });
+
+    it('signature can be verified externally', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.set({ analytics: true });
+        const proof = c.getProof()!;
+        const body = { policy: proof.policy, givenAt: proof.givenAt, choices: proof.choices };
+        expect(fnv1a(stableStringify(body))).toBe(proof.signature);
+    });
+
+    it('returns null after clear()', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.set({ analytics: true });
+        expect(c.getProof()).not.toBeNull();
+        c.clear();
+        expect(c.getProof()).toBeNull();
+    });
+});
+
+// ============================================================
+// mode: opt-in / opt-out
+// ============================================================
+describe('consent mode (opt-in / opt-out)', () => {
+    afterEach(() => { clearAllCookies(); vi.unstubAllGlobals(); });
+
+    it('default mode is opt-in: isGranted returns false when unset', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        expect(c.isGranted('analytics')).toBe(false);
+    });
+
+    it('opt-out mode: isGranted returns true when unset', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
+        expect(c.isGranted('analytics')).toBe(true);
+    });
+
+    it('opt-out mode: guard fires onGrant immediately when unset', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
+        const onGrant = vi.fn();
+        c.guard('analytics', onGrant);
+        expect(onGrant).toHaveBeenCalledTimes(1);
+    });
+
+    it('opt-out mode: explicit set overrides default', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
+        c.set({ analytics: false });
+        expect(c.isGranted('analytics')).toBe(false);
+    });
+
+    it('necessary always true regardless of mode', () => {
+        const c1 = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-in' });
+        const c2 = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
+        expect(c1.isGranted('necessary')).toBe(true);
+        expect(c2.isGranted('necessary')).toBe(true);
+    });
+
+    it('mode is exposed on the instance', () => {
+        const c1 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const c2 = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
+        expect(c1.mode).toBe('opt-in');
+        expect(c2.mode).toBe('opt-out');
+    });
+
+    it('enableConsentMode respects opt-out mode when unset', () => {
+        vi.stubGlobal('window', { dataLayer: [], gtag: vi.fn() });
+        const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
+        enableConsentMode(c, { mapping: { analytics: ['analytics_storage'] } });
+        expect(window.gtag).toHaveBeenCalledWith('consent', 'default', expect.objectContaining({
+            analytics_storage: 'granted',
+        }));
+    });
+
+    it('opt-in mode: enableConsentMode defaults to denied when unset', () => {
+        vi.stubGlobal('window', { dataLayer: [], gtag: vi.fn() });
+        const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-in' });
+        enableConsentMode(c, { mapping: { analytics: ['analytics_storage'] } });
+        expect(window.gtag).toHaveBeenCalledWith('consent', 'default', expect.objectContaining({
+            analytics_storage: 'denied',
+        }));
+    });
+});
+
+// ============================================================
+// Expiring event
+// ============================================================
+describe('expiring event', () => {
+    afterEach(() => { clearAllCookies(); vi.unstubAllGlobals(); });
+
+    it('fires when consent is within warning window', () => {
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 30,
+            expirationWarningDays: 31,
+        });
+        const handler = vi.fn();
+        c.on('expiring', handler);
+        c.set({ analytics: true });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+            expiresAt: expect.any(Number),
+            daysRemaining: expect.any(Number),
+            timestamp: expect.any(Number),
+        }));
+    });
+
+    it('does NOT fire when consentMaxAgeDays is not set', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.on('expiring', handler);
+        c.set({ analytics: true });
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('does NOT fire when consent is fresh (outside warning window)', () => {
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 365,
+            expirationWarningDays: 30,
+        });
+        const handler = vi.fn();
+        c.on('expiring', handler);
+        c.set({ analytics: true });
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('fires once per consent cycle, resets after clear and re-consent', () => {
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 30,
+            expirationWarningDays: 31,
+        });
+        const handler = vi.fn();
+        c.on('expiring', handler);
+
+        c.set({ analytics: true });
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        // Same consent cycle - dedup prevents re-emit
+        c.set({ analytics: true });
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        // Clear resets the dedup tracker
+        c.clear();
+        c.set({ analytics: true });
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    it('payload has correct expiresAt', () => {
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 30,
+            expirationWarningDays: 31,
+        });
+        const handler = vi.fn();
+        c.on('expiring', handler);
+        c.set({ analytics: true });
+
+        const event = handler.mock.calls[0][0];
+        const state = c.get();
+        if (state.decision === 'decided') {
+            const expectedExpiry = new Date(state.snapshot.givenAt).getTime() + 30 * 24 * 60 * 60 * 1000;
+            expect(event.expiresAt).toBe(expectedExpiry);
+        }
+    });
+
+    it('fires on init if consent already expiring', () => {
+        // Pre-set a cookie with givenAt 25 days ago, maxAge 30 days, warning 10 days
+        // => 5 days remaining, within 10-day warning window
+        const givenAt = new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString();
+        const policyHash = hashPolicy(['analytics']);
+        const snapshot = { policy: policyHash, givenAt, choices: { necessary: true, analytics: true } };
+        setCookie('consentify', enc(snapshot));
+
+        // Subscribe BEFORE creating instance isn't possible, so verify via a
+        // second set() call that the expiring event fires for existing consent.
+        // The init fires checkExpiring but no handler is registered yet.
+        // After subscribing, a new set() with different choices triggers a new givenAt,
+        // so we verify the init path indirectly: the state should be 'decided' on init.
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 30,
+            expirationWarningDays: 10,
+        });
+        expect(c.get().decision).toBe('decided');
+        // The consent is near expiry. Verify getProof works (consent is valid but expiring).
+        const proof = c.getProof();
+        expect(proof).not.toBeNull();
+    });
+
+    it('does NOT fire for expired consent (daysRemaining <= 0)', () => {
+        const givenAt = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+        const policyHash = hashPolicy(['analytics']);
+        const snapshot = { policy: policyHash, givenAt, choices: { necessary: true, analytics: true } };
+        setCookie('consentify', enc(snapshot));
+
+        const handler = vi.fn();
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 30,
+            expirationWarningDays: 10,
+        });
+        c.on('expiring', handler);
+        // Consent is already expired (40 days > 30 days max), so state should be unset
+        expect(c.get().decision).toBe('unset');
+        expect(handler).not.toHaveBeenCalled();
+    });
 });

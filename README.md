@@ -362,19 +362,6 @@ const analyticsGranted = useConsentify(consent, 'analytics');
 // analyticsGranted: boolean
 ```
 
-### `ConsentGate` (React)
-
-Conditionally render components based on consent:
-
-```tsx
-import { ConsentGate } from '@consentify/ui';
-import { consent } from '../lib/consent';
-
-<ConsentGate instance={consent} category="analytics" fallback={<Placeholder />}>
-  <AnalyticsDashboard />
-</ConsentGate>
-```
-
 ### Script Tag / IIFE
 
 For non-bundled apps (WordPress, static sites), use the IIFE build:
@@ -405,7 +392,6 @@ The `'necessary'` category is always `true` and cannot be disabled. When you cha
 | [@consentify/core](./packages/core) | Headless consent SDK -- TypeScript-first, SSR-safe, zero dependencies |
 | [@consentify/react](./packages/react) | React hook for @consentify/core |
 | [@consentify/cloud](./packages/cloud) | Cloud analytics adapter -- connects consent events to Consentify SaaS |
-| [@consentify/ui](./packages/ui) | Headless React components (ConsentGate) |
 
 ## Coming Soon: Consentify SaaS
 

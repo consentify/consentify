@@ -83,13 +83,6 @@ Bridges `@consentify/core` instances to the SaaS consent analytics API:
 - **Publishing**: `cloud-v*` tags trigger npm release (alongside `core-v*`, `react-v*`)
 - **SaaS compatibility**: Works with the Consentify SaaS app at `https://consentify.dev/api/consent`
 
-### UI Components (`packages/ui`)
-
-- `<ConsentGate instance={} category="" fallback={}>` - conditionally renders children when consent category is granted
-- Headless (no CSS), SSR-safe (renders fallback on server)
-- Uses `useSyncExternalStore` internally, same pattern as `@consentify/react`
-- **Publishing**: `ui-v*` tags trigger npm release
-
 ### IIFE Bundle
 
 - Core includes an IIFE build: `dist/consentify.iife.js` and `dist/consentify.iife.min.js`
@@ -105,7 +98,7 @@ Bridges `@consentify/core` instances to the SaaS consent analytics API:
 
 ### Testing
 
-- Test files: `packages/core/src/index.test.ts`, `packages/cloud/src/index.test.ts`, `packages/react/src/index.test.ts`, `packages/ui/src/index.test.ts`
+- Test files: `packages/core/src/index.test.ts`, `packages/cloud/src/index.test.ts`, `packages/react/src/index.test.ts`
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
 - Cloud tests mock `fetch` and `localStorage` via `vi.stubGlobal`

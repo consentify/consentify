@@ -5,11 +5,11 @@
 **Headless cookie consent that actually blocks scripts.**
 
 [![npm version](https://img.shields.io/npm/v/@consentify/core.svg)](https://www.npmjs.com/package/@consentify/core)
-[![CI](https://github.com/RomanDenysov/consentify/actions/workflows/ci.yml/badge.svg)](https://github.com/RomanDenysov/consentify/actions/workflows/ci.yml)
+[![CI](https://github.com/consentify/consentify/actions/workflows/ci.yml/badge.svg)](https://github.com/consentify/consentify/actions/workflows/ci.yml)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@consentify/core)](https://bundlephobia.com/package/@consentify/core)
 [![zero deps](https://img.shields.io/badge/dependencies-0-brightgreen)](#)
 [![TypeScript](https://img.shields.io/badge/TypeScript-100%25-blue.svg)](https://www.typescriptlang.org/)
-[![license](https://img.shields.io/npm/l/@consentify/core.svg)](https://github.com/RomanDenysov/consentify/blob/main/packages/core/LICENSE)
+[![license](https://img.shields.io/npm/l/@consentify/core.svg)](https://github.com/consentify/consentify/blob/main/packages/core/LICENSE)
 
 TypeScript-first, SSR-safe, zero-dependency consent management. Works on the server (Node.js headers), on the client (cookies/localStorage), and with React via `useSyncExternalStore` -- no Provider required.
 

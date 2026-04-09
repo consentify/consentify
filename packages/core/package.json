@@ -1,7 +1,7 @@
 {
   "name": "@consentify/core",
   "version": "2.2.0",
-  "description": "Minimal headless cookie consent SDK (TypeScript, SSR-ready, lazy-init).",
+  "description": "Headless cookie consent SDK - zero dependencies, TypeScript-first, SSR-safe.",
   "author": {
     "name": "Roman Denysov",
     "url": "https://github.com/RomanDenysov"
@@ -37,18 +37,23 @@
     "privacy",
     "headless",
     "ssr",
-    "typescript"
+    "typescript",
+    "zero-dependencies",
+    "google-consent-mode",
+    "consent-mode-v2",
+    "broadcast-channel",
+    "nextjs"
   ],
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RomanDenysov/consentify.git",
+    "url": "git+https://github.com/consentify/consentify.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/RomanDenysov/consentify/issues"
+    "url": "https://github.com/consentify/consentify/issues"
   },
-  "homepage": "https://github.com/RomanDenysov/consentify#readme",
+  "homepage": "https://github.com/consentify/consentify#readme",
   "exports": {
     ".": {
       "import": "./dist/index.js",

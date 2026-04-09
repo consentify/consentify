@@ -1389,6 +1389,14 @@ describe('getProof', () => {
         const body = { policy: proof.policy, givenAt: proof.givenAt, choices: proof.choices };
         expect(fnv1a(stableStringify(body))).toBe(proof.signature);
     });
+
+    it('returns null after clear()', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.set({ analytics: true });
+        expect(c.getProof()).not.toBeNull();
+        c.clear();
+        expect(c.getProof()).toBeNull();
+    });
 });
 
 // ============================================================
@@ -1496,17 +1504,21 @@ describe('expiring event', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('fires only once per consent cycle (dedup)', () => {
+    it('fires once per consent cycle, resets on new consent', () => {
         const c = createConsentify({
-            policy: { categories: ['analytics'] as const },
+            policy: { categories: ['analytics', 'marketing'] as const },
             consentMaxAgeDays: 30,
             expirationWarningDays: 31,
         });
         const handler = vi.fn();
         c.on('expiring', handler);
-        c.set({ analytics: true });
-        // Setting again with same givenAt (no change) won't re-emit
+
+        c.set({ analytics: true, marketing: false });
         expect(handler).toHaveBeenCalledTimes(1);
+
+        // Changing choices creates a new givenAt - fires again
+        c.set({ analytics: false, marketing: true });
+        expect(handler).toHaveBeenCalledTimes(2);
     });
 
     it('payload has correct expiresAt', () => {

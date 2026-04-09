@@ -199,6 +199,9 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     const consentMaxAgeDays = init.consentMaxAgeDays;
     const mode: ConsentMode = init.mode ?? 'opt-in';
     const expirationWarningDays = init.expirationWarningDays ?? 30;
+    if (consentMaxAgeDays && expirationWarningDays >= consentMaxAgeDays) {
+        console.warn('[consentify] expirationWarningDays should be less than consentMaxAgeDays');
+    }
 
     const isExpired = (givenAt: string): boolean => {
         if (!consentMaxAgeDays) return false;
@@ -381,7 +384,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         const { givenAt } = cachedState.snapshot;
         if (givenAt === expiringEmittedForGivenAt) return;
         const givenMs = new Date(givenAt).getTime();
-        if (isNaN(givenMs)) return;
+        if (isNaN(givenMs)) { console.warn('[consentify] Invalid consent timestamp:', givenAt); return; }
         const expiresMs = givenMs + consentMaxAgeDays * MS_PER_DAY;
         const daysRemaining = (expiresMs - Date.now()) / (MS_PER_DAY);
         if (daysRemaining > 0 && daysRemaining <= expirationWarningDays) {
@@ -400,7 +403,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     let bc: BroadcastChannel | null = null;
     if (isBrowser() && typeof BroadcastChannel !== 'undefined') {
         bc = new BroadcastChannel(`consentify:${cookieName}`);
-        bc.onmessage = () => { syncState(); notifyListeners(); };
+        bc.onmessage = () => { syncState(); notifyListeners(); checkExpiring(); };
     }
     // ======================================================
 
@@ -507,8 +510,6 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         client.clear();
     }
 
-    function flatBulkSet(grant: boolean): void;
-    function flatBulkSet(grant: boolean, cookieHeader: string): string;
     function flatBulkSet(grant: boolean, cookieHeader?: string): string | void {
         if (typeof cookieHeader === 'string') return server.set(allChoices(grant), cookieHeader);
         client.set(allChoices(grant));
@@ -516,11 +517,11 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
 
     function flatAcceptAll(): void;
     function flatAcceptAll(cookieHeader: string): string;
-    function flatAcceptAll(cookieHeader?: string): string | void { return flatBulkSet(true, cookieHeader as any); }
+    function flatAcceptAll(cookieHeader?: string): string | void { return flatBulkSet(true, cookieHeader); }
 
     function flatRejectAll(): void;
     function flatRejectAll(cookieHeader: string): string;
-    function flatRejectAll(cookieHeader?: string): string | void { return flatBulkSet(false, cookieHeader as any); }
+    function flatRejectAll(cookieHeader?: string): string | void { return flatBulkSet(false, cookieHeader); }
 
     function flatGetProof(): ConsentProof<T> | null;
     function flatGetProof(cookieHeader: string): ConsentProof<T> | null;

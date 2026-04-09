@@ -92,14 +92,16 @@ export interface ConsentEventMap<T extends UserCategory> {
 export type ConsentEventHandler<T extends UserCategory, K extends keyof ConsentEventMap<T>> =
     (event: ConsentEventMap<T>[K]) => void;
 
-function stableStringify(o: unknown): string {
+/** @internal */
+export function stableStringify(o: unknown): string {
     if (o === null || typeof o !== 'object') return JSON.stringify(o);
     if (Array.isArray(o)) return `[${o.map(stableStringify).join(',')}]`;
     const e = Object.entries(o as Record<string, unknown>).sort((a, b) => a[0].localeCompare(b[0]));
     return `{${e.map(([k, v]) => JSON.stringify(k) + ':' + stableStringify(v)).join(',')}}`;
 }
 
-function fnv1a(str: string): string {
+/** @internal */
+export function fnv1a(str: string): string {
     let h = 0x811c9dc5 >>> 0;
     for (let i = 0; i < str.length; i++) {
         h ^= str.charCodeAt(i);
@@ -108,7 +110,8 @@ function fnv1a(str: string): string {
     return ('00000000' + h.toString(16)).slice(-8);
 }
 
-function hashPolicy(categories: readonly string[], identifier?: string): string {
+/** @internal */
+export function hashPolicy(categories: readonly string[], identifier?: string): string {
     // Deterministic identity for the policy. If you provide `identifier`, it is folded into the hash,
     // but consider using `identifier` itself as the canonical version key for clarity.
     return fnv1a(stableStringify({ categories: [...categories].sort(), identifier: identifier ?? null}));

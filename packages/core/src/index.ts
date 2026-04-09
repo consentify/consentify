@@ -66,6 +66,17 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
      */
     consentMaxAgeDays?: number;
     /**
+     * Consent mode. 'opt-in' (default, GDPR) treats categories as denied until
+     * the user explicitly consents. 'opt-out' (CCPA) treats categories as granted
+     * until the user explicitly opts out.
+     */
+    mode?: ConsentMode;
+    /**
+     * Days before consent expiration to emit the 'expiring' event.
+     * Only relevant when consentMaxAgeDays is set. Default: 30.
+     */
+    expirationWarningDays?: number;
+    /**
      * Client-side storage priority. Server-side access is cookie-only.
      * Supported: 'cookie' (canonical), 'localStorage' (optional mirror for fast reads)
      * Default: ['cookie']
@@ -83,10 +94,22 @@ export interface ConsentifySubscribable<T extends UserCategory> {
     getServerSnapshot: () => ConsentState<T>;
 }
 
+// --- Consent mode ---
+export type ConsentMode = 'opt-in' | 'opt-out';
+
+// --- Consent proof ---
+export interface ConsentProof<T extends UserCategory> {
+    policy: string;
+    givenAt: string;
+    choices: Choices<T>;
+    signature: string;
+}
+
 // --- Typed event system ---
 export interface ConsentEventMap<T extends UserCategory> {
     change: { from: ConsentState<T>; to: ConsentState<T>; timestamp: number };
     clear: { timestamp: number };
+    expiring: { expiresAt: number; daysRemaining: number; timestamp: number };
 }
 
 export type ConsentEventHandler<T extends UserCategory, K extends keyof ConsentEventMap<T>> =
@@ -173,6 +196,8 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     };
     const storageOrder: StorageKind[] = (init.storage && init.storage.length > 0) ? init.storage : ['cookie'];
     const consentMaxAgeDays = init.consentMaxAgeDays;
+    const mode: ConsentMode = init.mode ?? 'opt-in';
+    const expirationWarningDays = init.expirationWarningDays ?? 30;
 
     const isExpired = (givenAt: string): boolean => {
         if (!consentMaxAgeDays) return false;
@@ -194,6 +219,17 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         }
         (base as any).necessary = true;
         return base;
+    };
+
+    const allChoices = (grant: boolean): Partial<Choices<T>> => {
+        const c: any = {};
+        for (const cat of init.policy.categories as unknown as T[]) c[cat] = grant;
+        return c;
+    };
+
+    const buildProof = (snapshot: Snapshot<T>): ConsentProof<T> => {
+        const body = { policy: snapshot.policy, givenAt: snapshot.givenAt, choices: snapshot.choices };
+        return { ...body, signature: fnv1a(stableStringify(body)) };
     };
 
     // --- client-side storage helpers ---
@@ -305,19 +341,6 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         });
     };
 
-    // Init cache on browser
-    if (isBrowser()) {
-        syncState();
-    }
-
-    // Multi-tab sync — notify other tabs on any consent change
-    let bc: BroadcastChannel | null = null;
-    if (isBrowser() && typeof BroadcastChannel !== 'undefined') {
-        bc = new BroadcastChannel(`consentify:${cookieName}`);
-        bc.onmessage = () => { syncState(); notifyListeners(); };
-    }
-    // ======================================================
-
     // ---- Typed event emitter ----
     // Handlers are typed at the on()/emit() boundary; the Map stores the union since
     // TypeScript can't express per-key handler types in a single Map.
@@ -348,6 +371,38 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         return unsub;
     }
 
+    // --- Expiration warning ---
+    let expiringEmittedForGivenAt = '';
+
+    const checkExpiring = (): void => {
+        if (!consentMaxAgeDays) return;
+        if (cachedState.decision !== 'decided') return;
+        const { givenAt } = cachedState.snapshot;
+        if (givenAt === expiringEmittedForGivenAt) return;
+        const givenMs = new Date(givenAt).getTime();
+        if (isNaN(givenMs)) return;
+        const expiresMs = givenMs + consentMaxAgeDays * 24 * 60 * 60 * 1000;
+        const daysRemaining = (expiresMs - Date.now()) / (24 * 60 * 60 * 1000);
+        if (daysRemaining > 0 && daysRemaining <= expirationWarningDays) {
+            expiringEmittedForGivenAt = givenAt;
+            emit('expiring', { expiresAt: expiresMs, daysRemaining, timestamp: Date.now() });
+        }
+    };
+
+    // Init cache on browser
+    if (isBrowser()) {
+        syncState();
+        checkExpiring();
+    }
+
+    // Multi-tab sync — notify other tabs on any consent change
+    let bc: BroadcastChannel | null = null;
+    if (isBrowser() && typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel(`consentify:${cookieName}`);
+        bc.onmessage = () => { syncState(); notifyListeners(); };
+    }
+    // ======================================================
+
     // ---- client API
     function clientGet(): ConsentState<T>;
     function clientGet(category: Necessary | T): boolean;
@@ -355,9 +410,8 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         // Return cached state for React compatibility
         if (typeof category === 'undefined') return cachedState;
         if (category === 'necessary') return true;
-        return cachedState.decision === 'decided'
-            ? !!cachedState.snapshot.choices[category]
-            : false;
+        if (cachedState.decision === 'decided') return !!cachedState.snapshot.choices[category];
+        return mode === 'opt-out';
     }
 
     const client = {
@@ -377,6 +431,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
                 syncState();
                 notifyListeners();
                 emit('change', { from, to: cachedState, timestamp: Date.now() });
+                checkExpiring();
                 bc?.postMessage(null);
             }
         },
@@ -450,11 +505,33 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         client.clear();
     }
 
+    function flatAcceptAll(): void;
+    function flatAcceptAll(cookieHeader: string): string;
+    function flatAcceptAll(cookieHeader?: string): string | void {
+        if (typeof cookieHeader === 'string') return server.set(allChoices(true), cookieHeader);
+        client.set(allChoices(true));
+    }
+
+    function flatRejectAll(): void;
+    function flatRejectAll(cookieHeader: string): string;
+    function flatRejectAll(cookieHeader?: string): string | void {
+        if (typeof cookieHeader === 'string') return server.set(allChoices(false), cookieHeader);
+        client.set(allChoices(false));
+    }
+
+    function flatGetProof(): ConsentProof<T> | null;
+    function flatGetProof(cookieHeader: string): ConsentProof<T> | null;
+    function flatGetProof(cookieHeader?: string): ConsentProof<T> | null {
+        const state = typeof cookieHeader === 'string' ? server.get(cookieHeader) : cachedState;
+        return state.decision === 'decided' ? buildProof(state.snapshot) : null;
+    }
+
     return {
         policy: {
             categories: init.policy.categories,
             identifier: policyHash,
         },
+        mode,
         server,
         client,
 
@@ -464,6 +541,9 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         },
         set: flatSet,
         clear: flatClear,
+        acceptAll: flatAcceptAll,
+        rejectAll: flatRejectAll,
+        getProof: flatGetProof,
         subscribe: client.subscribe,
         getServerSnapshot: client.getServerSnapshot,
         guard: client.guard,
@@ -488,7 +568,8 @@ export function enableDebug<T extends UserCategory>(
     const log = options?.onLog ?? ((msg: string, event: unknown) => console.log(`[consentify] ${msg}`, event));
     const unsub1 = instance.on('change', (e) => log('Consent changed', e));
     const unsub2 = instance.on('clear', (e) => log('Consent cleared', e));
-    return () => { unsub1(); unsub2(); };
+    const unsub3 = instance.on('expiring', (e) => log('Consent expiring', e));
+    return () => { unsub1(); unsub2(); unsub3(); };
 }
 
 // --- Google Consent Mode v2 ---
@@ -558,6 +639,8 @@ export function enableConsentMode<T extends string>(
         granted = true;
       } else if (state.decision === 'decided') {
         granted = !!(state.snapshot.choices as Record<string, boolean>)[category];
+      } else if ((instance as any).mode === 'opt-out') {
+        granted = true;
       }
 
       for (const gType of gTypes) {

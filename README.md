@@ -248,7 +248,9 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `cookie.secure` | `boolean` | `true` | Secure flag (forced `true` when `sameSite: 'None'`) |
 | `cookie.path` | `string` | `'/'` | Cookie path |
 | `cookie.domain` | `string` | — | Cookie domain |
-| `consentMaxAgeDays` | `number` | — | Auto-expire consent after N days |
+| `consentMaxAgeDays` | `number` | - | Auto-expire consent after N days |
+| `mode` | `'opt-in' \| 'opt-out'` | `'opt-in'` | GDPR opt-in (deny by default) or CCPA opt-out (grant by default) |
+| `expirationWarningDays` | `number` | `30` | Days before expiry to emit `'expiring'` event |
 | `storage` | `StorageKind[]` | `['cookie']` | Client storage priority (`'cookie'`, `'localStorage'`) |
 
 ### Flat API (primary)
@@ -262,10 +264,16 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `set` | `(choices: Partial<Choices<T>>, cookieHeader: string) => string` | Returns a `Set-Cookie` header string (server-side) |
 | `clear` | `() => void` | Clear all consent data (client-side) |
 | `clear` | `(serverMode: string) => string` | Returns a clearing `Set-Cookie` header (server-side) |
+| `acceptAll` | `() => void` | Grant all user categories (client-side) |
+| `acceptAll` | `(cookieHeader: string) => string` | Grant all, returns `Set-Cookie` header (server-side) |
+| `rejectAll` | `() => void` | Deny all user categories; necessary stays `true` (client-side) |
+| `rejectAll` | `(cookieHeader: string) => string` | Deny all, returns `Set-Cookie` header (server-side) |
+| `getProof` | `() => ConsentProof<T> \| null` | Tamper-evident consent receipt for audit trails |
+| `getProof` | `(cookieHeader: string) => ConsentProof<T> \| null` | Server-side consent proof |
 | `guard` | `(category, onGrant, onRevoke?) => () => void` | Run code when consent is granted; optionally handle revocation. Returns a dispose function |
 | `subscribe` | `(cb: () => void) => () => void` | Subscribe to changes (React-compatible) |
 | `getServerSnapshot` | `() => ConsentState<T>` | Always returns `{ decision: 'unset' }` for SSR |
-| `on` | `(type, handler) => () => void` | Subscribe to typed events (`'change'`, `'clear'`). Returns unsubscribe |
+| `on` | `(type, handler) => () => void` | Subscribe to typed events (`'change'`, `'clear'`, `'expiring'`). Returns unsubscribe |
 | `once` | `(type, handler) => () => void` | One-time event listener, auto-unsubscribes after first call |
 
 ### Server / Client Namespaces (advanced)
@@ -346,6 +354,55 @@ consent.on('clear', (event) => {
 consent.once('change', (event) => {
   // fires once, then auto-unsubscribes
 });
+
+// Expiration warning (requires consentMaxAgeDays)
+consent.on('expiring', (event) => {
+  console.log(`Consent expires in ${event.daysRemaining.toFixed(0)} days`);
+  // Show re-consent prompt
+});
+```
+
+### Accept All / Reject All
+
+Convenience methods that set all user categories at once:
+
+```ts
+consent.acceptAll();  // All categories true
+consent.rejectAll();  // All categories false (necessary stays true)
+
+// Server-side
+const header = consent.acceptAll(cookieHeader);
+```
+
+### Consent Proof (Audit Trail)
+
+Get a tamper-evident consent receipt for compliance records:
+
+```ts
+const proof = consent.getProof();
+// { policy: '...', givenAt: '2026-...', choices: {...}, signature: 'a1b2c3d4' }
+
+// Server-side
+const proof = consent.getProof(cookieHeader);
+```
+
+### Consent Mode (opt-in / opt-out)
+
+Configure default behavior per jurisdiction:
+
+```ts
+// GDPR (default): categories denied until user consents
+const gdpr = createConsentify({
+  policy: { categories: ['analytics'] as const },
+  mode: 'opt-in',
+});
+
+// CCPA: categories granted until user opts out
+const ccpa = createConsentify({
+  policy: { categories: ['analytics'] as const },
+  mode: 'opt-out',
+});
+ccpa.isGranted('analytics'); // true (default until user opts out)
 ```
 
 ### `useConsentify(instance, category?)` (React)
@@ -379,7 +436,7 @@ For non-bundled apps (WordPress, static sites), use the IIFE build:
 </script>
 ```
 
-The IIFE bundle is 2.92kb gzipped and exposes all exports on the `Consentify` global.
+The IIFE bundle is 3.25kb gzipped and exposes all exports on the `Consentify` global.
 
 ### Policy Versioning
 

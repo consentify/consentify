@@ -59,8 +59,12 @@ Key design patterns:
 - `'necessary'` category is always `true` and cannot be disabled
 - Storage abstraction supports cookie (canonical) and localStorage (optional mirror)
 - State uses discriminated union: `{ decision: 'unset' }` | `{ decision: 'decided', snapshot }`
-- Typed event system: `on('change', handler)` / `once('change', handler)` for reactive adapters
+- Typed event system: `on('change', handler)` / `once('change', handler)` / `on('expiring', handler)` for reactive adapters
 - `enableDebug(instance)` - tree-shakeable debug adapter that logs consent changes via event system
+- `acceptAll()` / `rejectAll()` - convenience methods that set all user categories at once
+- `getProof()` - returns `ConsentProof` with FNV1a signature for audit trails
+- `mode: 'opt-in' | 'opt-out'` - GDPR opt-in (deny by default) vs CCPA opt-out (grant by default)
+- `expirationWarningDays` + `'expiring'` event - fires when consent is near expiry
 
 ### Internal utilities
 - `fnv1a()` / `stableStringify()` - deterministic policy hashing

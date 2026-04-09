@@ -38,13 +38,13 @@
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RomanDenysov/consentify.git",
+    "url": "git+https://github.com/consentify/consentify.git",
     "directory": "packages/cloud"
   },
   "bugs": {
-    "url": "https://github.com/RomanDenysov/consentify/issues"
+    "url": "https://github.com/consentify/consentify/issues"
   },
-  "homepage": "https://github.com/RomanDenysov/consentify#readme",
+  "homepage": "https://github.com/consentify/consentify#readme",
   "exports": {
     ".": {
       "import": "./dist/index.js",

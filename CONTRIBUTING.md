@@ -10,7 +10,7 @@ Thanks for your interest in contributing!
 ## Setup
 
 ```bash
-git clone https://github.com/RomanDenysov/consentify.git
+git clone https://github.com/consentify/consentify.git
 cd consentify
 pnpm install
 ```

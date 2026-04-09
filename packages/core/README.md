@@ -282,7 +282,7 @@ const defaultCategories = [
 
 If you find this library useful:
 
-- ⭐ Star the repo on [GitHub](https://github.com/RomanDenysov/consentify)
+- ⭐ Star the repo on [GitHub](https://github.com/consentify/consentify)
 - 💖 [Sponsor on GitHub](https://github.com/sponsors/RomanDenysov)
 - ☕ [Buy me a coffee on Ko-fi](https://ko-fi.com/romandenysov)
 - ☕ [Buy me a coffee](https://buymeacoffee.com/romandenysov)

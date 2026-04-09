@@ -82,6 +82,41 @@ If `localStorage` is unavailable (private browsing, blocked, etc.), a temporary 
 - `reject_all`: All non-necessary categories denied
 - `customize`: Mixed/partial choices
 
+## Works with Core Features
+
+### acceptAll / rejectAll
+
+The cloud adapter automatically detects bulk actions:
+
+```ts
+consent.acceptAll();   // cloud posts action: 'accept_all'
+consent.rejectAll();   // cloud posts action: 'reject_all'
+consent.set({ analytics: true, marketing: false }); // action: 'customize'
+```
+
+### Consent Proof
+
+Get a tamper-evident receipt alongside cloud events:
+
+```ts
+consent.on('change', () => {
+  const proof = consent.getProof();
+  // { policy, givenAt, choices, signature } - for local audit trails
+});
+```
+
+### Consent Mode (opt-in / opt-out)
+
+Cloud adapter works with both GDPR and CCPA modes:
+
+```ts
+const consent = createConsentify({
+  policy: { categories: ['analytics'] as const },
+  mode: 'opt-out', // CCPA: granted by default
+});
+enableCloud(consent, { siteId: 'site-1' });
+```
+
 ## TypeScript
 
 Full TypeScript support. The adapter is generic over your category types:

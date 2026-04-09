@@ -34,20 +34,8 @@ function CookieBanner() {
   return (
     <div className="cookie-banner">
       <p>We use cookies to enhance your experience.</p>
-      <button onClick={() => consent.client.set({
-        analytics: true,
-        marketing: true,
-        preferences: true
-      })}>
-        Accept All
-      </button>
-      <button onClick={() => consent.client.set({
-        analytics: false,
-        marketing: false,
-        preferences: false
-      })}>
-        Essential Only
-      </button>
+      <button onClick={() => consent.acceptAll()}>Accept All</button>
+      <button onClick={() => consent.rejectAll()}>Essential Only</button>
     </div>
   );
 }
@@ -59,19 +47,56 @@ function CookieBanner() {
 
 React hook that subscribes to consent state changes using `useSyncExternalStore`.
 
-**Parameters:**
-- `instance` — The object returned by `createConsentify()`
+```tsx
+const state = useConsentify(consent);
+// { decision: 'unset' } | { decision: 'decided', snapshot: Snapshot<T> }
+```
 
-**Returns:** `ConsentState<T>`
-- `{ decision: 'unset' }` — No consent given yet
-- `{ decision: 'decided', snapshot }` — User has made a choice
+### `useConsentify(instance, category)`
+
+Category overload that returns a boolean for a single category:
+
+```tsx
+const analyticsGranted = useConsentify(consent, 'analytics');
+// boolean - true if granted, false otherwise
+```
+
+### Using Events in React
+
+Subscribe to consent lifecycle events with `useEffect`:
+
+```tsx
+import { useEffect, useState } from 'react';
+
+function ExpirationWarning() {
+  const [expiring, setExpiring] = useState(false);
+
+  useEffect(() => {
+    const unsub = consent.on('expiring', (event) => {
+      setExpiring(true);
+    });
+    return unsub;
+  }, []);
+
+  if (!expiring) return null;
+  return <p>Your consent is expiring soon. Please re-consent.</p>;
+}
+```
+
+### Consent Proof
+
+Get a tamper-evident consent receipt for compliance:
+
+```tsx
+const proof = consent.getProof();
+// { policy, givenAt, choices, signature } or null
+```
 
 ### Re-exports
 
 This package re-exports everything from `@consentify/core`:
-- `createConsentify`
-- `defaultCategories`
-- All types (`ConsentState`, `Snapshot`, `Choices`, etc.)
+- `createConsentify`, `defaultCategories`, `enableConsentMode`, `enableDebug`
+- All types (`ConsentState`, `Snapshot`, `Choices`, `ConsentProof`, `ConsentMode`, etc.)
 
 ## SSR Support
 

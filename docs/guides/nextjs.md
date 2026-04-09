@@ -26,6 +26,7 @@ export const consent = createConsentify({
     secure: true,
   },
   consentMaxAgeDays: 365,
+  expirationWarningDays: 30, // emit 'expiring' event 30 days before
 });
 ```
 
@@ -287,6 +288,122 @@ export function DebugConsent() {
   }, []);
 
   return null;
+}
+```
+
+## 9. Accept All / Reject All
+
+Simplified consent banner buttons:
+
+```tsx
+// components/CookieBanner.tsx
+'use client';
+
+import { useConsentify } from '@consentify/react';
+import { consent } from '../lib/consent';
+
+export function CookieBanner() {
+  const state = useConsentify(consent);
+  if (state.decision === 'decided') return null;
+
+  return (
+    <div role="dialog" aria-label="Cookie consent">
+      <p>We use cookies to improve your experience.</p>
+      <button onClick={() => consent.acceptAll()}>Accept All</button>
+      <button onClick={() => consent.rejectAll()}>Reject All</button>
+    </div>
+  );
+}
+```
+
+Server-side version (Server Actions):
+
+```ts
+// app/actions.ts
+'use server';
+
+import { cookies } from 'next/headers';
+import { consent } from '../lib/consent';
+
+export async function acceptAllConsent() {
+  const cookieStore = await cookies();
+  const header = consent.acceptAll(cookieStore.toString());
+  // Parse and set the cookie from the Set-Cookie header
+  const [nameValue] = header.split(';');
+  const [name, value] = nameValue.split('=');
+  cookieStore.set(name, value, { path: '/', maxAge: 60 * 60 * 24 * 365, sameSite: 'lax', secure: true });
+}
+```
+
+## 10. Consent Mode (opt-in / opt-out)
+
+Configure per jurisdiction:
+
+```ts
+// lib/consent.ts
+import { createConsentify } from '@consentify/core';
+
+export const consent = createConsentify({
+  policy: { categories: ['analytics', 'marketing'] as const },
+  mode: 'opt-in',          // GDPR: denied by default
+  // mode: 'opt-out',      // CCPA: granted by default
+  consentMaxAgeDays: 365,
+  expirationWarningDays: 30,
+});
+```
+
+## 11. Consent Proof for Compliance
+
+Record tamper-evident consent receipts:
+
+```tsx
+'use client';
+
+import { useEffect } from 'react';
+import { consent } from '../lib/consent';
+
+export function ComplianceRecorder() {
+  useEffect(() => {
+    return consent.on('change', () => {
+      const proof = consent.getProof();
+      if (proof) {
+        fetch('/api/compliance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(proof),
+        });
+      }
+    });
+  }, []);
+  return null;
+}
+```
+
+## 12. Expiration Warnings
+
+Prompt users to re-consent before expiry:
+
+```tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import { consent } from '../lib/consent';
+
+export function ExpirationWarning() {
+  const [days, setDays] = useState<number | null>(null);
+
+  useEffect(() => {
+    return consent.on('expiring', (e) => setDays(Math.round(e.daysRemaining)));
+  }, []);
+
+  if (days === null) return null;
+
+  return (
+    <div role="alert">
+      <p>Your consent expires in {days} days.</p>
+      <button onClick={() => { consent.acceptAll(); setDays(null); }}>Renew</button>
+    </div>
+  );
 }
 ```
 

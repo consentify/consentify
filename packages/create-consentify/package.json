@@ -1,0 +1,65 @@
+{
+  "name": "create-consentify",
+  "version": "0.1.0",
+  "description": "Scaffold Consentify cookie consent SDK into your project.",
+  "author": {
+    "name": "Roman Denysov",
+    "url": "https://github.com/RomanDenysov"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "create-consentify": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "rimraf dist && tsup",
+    "check": "tsc --noEmit",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "citty": "^0.1.6",
+    "execa": "^9.5.2",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.7.0",
+    "rimraf": "6.0.1",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3"
+  },
+  "keywords": [
+    "create",
+    "consentify",
+    "cookie",
+    "cookie-consent",
+    "cookie-banner",
+    "consent-management",
+    "gdpr",
+    "ccpa",
+    "cli",
+    "scaffolder"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/consentify/consentify.git",
+    "directory": "packages/create-consentify"
+  },
+  "bugs": {
+    "url": "https://github.com/consentify/consentify/issues"
+  },
+  "homepage": "https://github.com/consentify/consentify#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}

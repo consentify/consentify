@@ -30,7 +30,7 @@ pnpm run size
 
 ## Publishing
 
-CI publishes on tags matching `core-v*`:
+CI publishes on tags: `core-v*`, `react-v*`, `cloud-v*`, `create-consentify-v*`.
 ```bash
 pnpm changeset           # Create changeset
 pnpm changeset version   # Version packages
@@ -99,6 +99,16 @@ Bridges `@consentify/core` instances to the SaaS consent analytics API:
 - `useConsentify(instance)` - returns `ConsentState<T>` via `useSyncExternalStore`
 - `useConsentify(instance, category)` - returns `boolean` for a single category (overload)
 - Re-exports everything from `@consentify/core`
+
+### Scaffolder (`packages/create-consentify`)
+
+Top-level npm package `create-consentify` (run via `npx create-consentify@latest`). Interactive CLI that scaffolds consent config + provider into existing projects (Next.js App/Pages, Vite+React, Remix, Astro, vanilla).
+
+- Build: `tsup` bundles a single ESM `dist/index.js` with `#!/usr/bin/env node` shebang (deviates from tsc-based pattern because a CLI needs bundled deps for fast `npx`).
+- Entry: `src/index.ts` wires `citty` command -> `src/cli.ts` orchestrator -> `@clack/prompts` wizard -> framework scaffolders -> `execa` install.
+- Templates live in `src/templates/*` (pure template-literal functions); per-framework logic in `src/frameworks/*`.
+- Non-interactive via flags: `--framework`, `--categories`, `--mode`, `--gcm`, `--site-id`, `--api-key`, `--pm`, `--yes`.
+- Never auto-edits existing files - only creates new files and prints wiring instructions.
 
 ### Testing
 

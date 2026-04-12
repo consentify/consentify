@@ -15,6 +15,14 @@ TypeScript-first, SSR-safe, zero-dependency consent management. Works on the ser
 
 ## Quick Start
 
+Scaffold a typed setup into an existing project (Next.js, Vite, Remix, Astro, or vanilla):
+
+```bash
+npx create-consentify@latest
+```
+
+Or install the SDK directly:
+
 ```bash
 npm install @consentify/core
 ```
@@ -449,6 +457,7 @@ The `'necessary'` category is always `true` and cannot be disabled. When you cha
 | [@consentify/core](./packages/core) | Headless consent SDK -- TypeScript-first, SSR-safe, zero dependencies |
 | [@consentify/react](./packages/react) | React hook for @consentify/core |
 | [@consentify/cloud](./packages/cloud) | Cloud analytics adapter -- connects consent events to Consentify SaaS |
+| [create-consentify](./packages/create-consentify) | `npx` scaffolder -- wires the SDK into Next.js, Vite, Remix, Astro, or vanilla projects |
 
 ## Coming Soon: Consentify SaaS
 

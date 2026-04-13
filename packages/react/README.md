@@ -8,6 +8,10 @@
 
 ## Install
 
+Fastest path: scaffold a typed React setup with `npx create-consentify@latest`.
+
+Or install directly:
+
 ```bash
 npm install @consentify/react
 # or

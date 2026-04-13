@@ -2,7 +2,15 @@
 
 Complete guide for integrating Consentify with Next.js App Router. Covers server-side consent reading, client-side banners, conditional rendering, Server Actions, and Google Consent Mode.
 
-## Install
+## Quick start
+
+```bash
+npx create-consentify@latest
+```
+
+Pick "Next.js (App Router)" and you're done — `lib/consent.ts`, `components/consent-provider.tsx`, GCM wiring, and dependencies are all set up. The rest of this guide explains what the scaffolder produces and how to extend it.
+
+## Install (manual)
 
 ```bash
 npm install @consentify/core @consentify/react

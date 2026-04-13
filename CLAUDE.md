@@ -37,6 +37,8 @@ pnpm changeset version   # Version packages
 git tag core-v1.0.0 && git push origin core-v1.0.0  # Trigger release
 ```
 
+**First publish of a new unscoped (top-level) package**: the granular `NPM_TOKEN` is scoped to `@consentify/*` and cannot create new top-level names. Bootstrap-publish once from local (`cd packages/<name> && npm publish --access public`), then add the now-existing package to the token's allowlist for future CI publishes. Scoped packages under `@consentify/*` work out of the box.
+
 ## Git & GitHub
 
 - Repo lives at `consentify/consentify` (transferred from `RomanDenysov/consentify`)
@@ -71,6 +73,10 @@ Key design patterns:
 - `readCookie()` / `writeCookie()` - isomorphic cookie handling
 - Listener pattern for React reactivity (`listeners` Set, `syncState`, `notifyListeners`)
 - Event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`
+
+### Common SDK API mistakes to avoid
+- `enableConsentMode(instance, opts)` accepts only `{ mapping, waitForUpdate? }` - there is **no** `defaults:` key. The `gtag('consent','default',...)` defaults belong in the HTML `<head>`, not in the SDK call.
+- `ConsentState.decision` is `'unset' | 'decided'` - never `'pending'`.
 
 ### SSR Safety
 
@@ -113,6 +119,7 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 ### Testing
 
 - Test files: `packages/core/src/index.test.ts`, `packages/cloud/src/index.test.ts`, `packages/react/src/index.test.ts`, and `packages/create-consentify/src/__tests__/*.test.ts` (8 files covering templates, detection, frameworks, flags, gcm-mapping, provider output, safe writes, pm commands)
+- Root `vitest.config.ts` globs `packages/*/src/**/*.test.ts` - new workspace packages are auto-discovered, no per-package vitest config needed
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
 - Cloud tests mock `fetch` and `localStorage` via `vi.stubGlobal`

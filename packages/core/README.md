@@ -18,6 +18,10 @@
 
 ## Install
 
+Fastest path: scaffold the SDK into your project with `npx create-consentify@latest`.
+
+Or install directly:
+
 ```bash
 npm install @consentify/core
 # or

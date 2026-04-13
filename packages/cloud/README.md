@@ -8,6 +8,10 @@ Cloud adapter for [@consentify/core](../core/) - connects the consent SDK to Con
 
 ## Installation
 
+Fastest path: scaffold a SaaS-connected setup with `npx create-consentify@latest` and answer "Yes" when asked to connect to the dashboard.
+
+Or install directly:
+
 ```bash
 npm install @consentify/cloud @consentify/core
 ```

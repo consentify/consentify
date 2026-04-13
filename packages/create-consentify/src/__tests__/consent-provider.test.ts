@@ -12,10 +12,10 @@ describe('generateReactProvider', () => {
         expect(out).toContain(`import { useConsentify } from '@consentify/react';`);
     });
 
-    it.each(flavors)(`%s: wires acceptAll and rejectAll buttons`, (flavor) => {
+    it.each(flavors)(`%s: wires acceptAll and rejectAll buttons (typo-resistant)`, (flavor) => {
         const out = generateReactProvider(flavor);
-        expect(out).toContain('consent.acceptAll()');
-        expect(out).toContain('consent.rejectAll()');
+        expect(out).toMatch(/consent\.\s*acceptAll\s*\(\s*\)/);
+        expect(out).toMatch(/consent\.\s*rejectAll\s*\(\s*\)/);
     });
 
     it.each(flavors)(`%s: checks decision against 'unset' not 'pending'`, (flavor) => {

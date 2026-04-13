@@ -65,4 +65,11 @@ describe('installDeps', () => {
             expect.any(Object),
         );
     });
+
+    it('propagates execa errors to the caller', async () => {
+        vi.mocked(execa).mockRejectedValueOnce(new Error('ENOENT: pnpm not found'));
+        await expect(
+            installDeps({ cwd: '/tmp', pm: 'pnpm', runtime: ['@consentify/core'] }),
+        ).rejects.toThrow(/pnpm not found/);
+    });
 });

@@ -45,25 +45,27 @@ export async function run(flags: ParsedFlags = {}): Promise<void> {
 
     console.log();
     log.info(pc.bold('Writing files:'));
-    let written = 0;
-    let skipped = 0;
+    let filesWritten = false;
     for (const file of files) {
         const abs = resolve(cwd, file.path);
-        const result = await writeFileSafe(abs, file.content, { overwrite: false });
+        let result: 'written' | 'skipped';
+        try {
+            result = await writeFileSafe(abs, file.content, { overwrite: false });
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`Failed to write ${file.path}: ${msg}`);
+        }
         if (result === 'written') {
             log.success(file.path);
-            written++;
+            filesWritten = true;
         } else {
             log.warn(`${file.path} already exists - skipped`);
-            skipped++;
         }
     }
 
-    if (written === 0 && skipped > 0) {
+    if (!filesWritten) {
         console.log();
-        log.error(
-            `No files were written (${skipped} already exist). Remove them or run in a fresh directory to scaffold.`,
-        );
+        log.error('No files were written (all already exist). Remove them or run in a fresh directory.');
         process.exit(1);
     }
 
@@ -101,7 +103,7 @@ async function resolveAnswers(
         };
         if (!isComplete(merged)) {
             throw new Error(
-                '--yes was passed but required flags are missing. Provide --framework, --categories, --mode, and --pm (or run in a project with a lockfile). If --site-id is set, it is also required.',
+                '--yes requires: --framework, --categories, --mode, --pm. Also required if --site-id is set.',
             );
         }
         return {

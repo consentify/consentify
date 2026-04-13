@@ -112,7 +112,7 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 
 ### Testing
 
-- Test files: `packages/core/src/index.test.ts`, `packages/cloud/src/index.test.ts`, `packages/react/src/index.test.ts`
+- Test files: `packages/core/src/index.test.ts`, `packages/cloud/src/index.test.ts`, `packages/react/src/index.test.ts`, and `packages/create-consentify/src/__tests__/*.test.ts` (8 files covering templates, detection, frameworks, flags, gcm-mapping, provider output, safe writes, pm commands)
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
 - Cloud tests mock `fetch` and `localStorage` via `vi.stubGlobal`

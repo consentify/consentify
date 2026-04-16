@@ -3,7 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "declaration": true,
-    "emitDeclarationOnly": false,
+    "emitDeclarationOnly": true,
     "noEmit": false,
     "removeComments": true
   }

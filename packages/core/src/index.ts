@@ -82,6 +82,169 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
      * Default: ['cookie']
      */
     storage?: StorageKind[];
+    /**
+     * HMAC-SHA256 signing secret for consent proofs. Server-only — passing this
+     * value in a browser context throws ConsentifyConfigError because the secret
+     * would be visible to end users. When set, `getProof()` returns a Promise.
+     * When omitted, a non-cryptographic FNV1a signature is used (deprecated).
+     */
+    secret?: string;
+    /**
+     * Optional custom storage backend (e.g. a server-side database). When
+     * provided, the SDK mirrors every consent change to `adapter.save()` and
+     * hydrates initial state from `adapter.load()` on browser init.
+     */
+    adapter?: ConsentAdapter;
+    /**
+     * Visitor identifier used by the adapter and cloud reporter. When omitted,
+     * a per-browser id is generated and persisted in localStorage under
+     * `consentify_visitor`. On the server this falls back to an empty string
+     * unless explicitly provided.
+     */
+    visitorId?: VisitorIdSource;
+}
+
+/**
+ * Init variant for SaaS / cloud mode. When `siteId` is present, the factory
+ * becomes async: it fetches a SiteConfig from the CDN, derives `policy` and
+ * `mode` from it, and auto-enables cloud event reporting to the ingest
+ * endpoint. Local overrides take precedence over values from the fetched
+ * SiteConfig.
+ */
+export interface CloudInit {
+    siteId: string;
+    apiKey?: string;
+    endpoints?: { config?: string; ingest?: string };
+    cookie?: CreateConsentifyInit<readonly string[]>['cookie'];
+    mode?: ConsentMode;
+    consentMaxAgeDays?: number;
+    expirationWarningDays?: number;
+    storage?: StorageKind[];
+    secret?: string;
+    adapter?: ConsentAdapter;
+    visitorId?: VisitorIdSource;
+}
+
+/**
+ * Custom storage backend for mirroring consent state to a user-owned store
+ * (e.g. a server-side database). All methods are called fire-and-forget from
+ * the SDK: thrown errors are caught and logged via `console.warn`, never
+ * bubbled up into the consent flow.
+ */
+export interface ConsentAdapter {
+    save(data: {
+        visitorId: string;
+        snapshot: Snapshot<any>;
+        proof: ConsentProof<any>;
+    }): Promise<void>;
+    load(visitorId: string): Promise<Snapshot<any> | null>;
+}
+
+/**
+ * Source for the visitor identifier. Either a concrete string, or a factory
+ * function (sync or async) that resolves to one.
+ */
+export type VisitorIdSource = string | (() => string | Promise<string>);
+
+/**
+ * Error thrown on invalid factory configuration or when SaaS config fetch
+ * fails. The underlying error (if any) is attached as `cause`.
+ */
+export class ConsentifyConfigError extends Error {
+    constructor(message: string, options?: ErrorOptions) {
+        super(message, options);
+        this.name = 'ConsentifyConfigError';
+    }
+}
+
+/**
+ * Members shared by both sync (FNV1a) and async (HMAC) instance variants.
+ * Only `getProof` differs between them.
+ */
+interface ConsentifyInstanceShared<Cs extends readonly string[]> {
+    readonly policy: { readonly categories: Cs; readonly identifier: string };
+    readonly mode: ConsentMode;
+    readonly server: {
+        get: (cookieHeader: string | null | undefined) => ConsentState<ArrToUnion<Cs>>;
+        set: (choices: Partial<Choices<ArrToUnion<Cs>>>, currentCookieHeader?: string) => string;
+        clear: () => string;
+    };
+    readonly client: {
+        get: {
+            (): ConsentState<ArrToUnion<Cs>>;
+            (category: Necessary | ArrToUnion<Cs>): boolean;
+        };
+        set: (choices: Partial<Choices<ArrToUnion<Cs>>>) => void;
+        clear: () => void;
+        subscribe: (callback: () => void) => () => void;
+        getServerSnapshot: () => ConsentState<ArrToUnion<Cs>>;
+        guard: (
+            category: Necessary | ArrToUnion<Cs>,
+            onGrant: () => void,
+            onRevoke?: () => void,
+        ) => () => void;
+    };
+    readonly get: {
+        (): ConsentState<ArrToUnion<Cs>>;
+        (cookieHeader: string): ConsentState<ArrToUnion<Cs>>;
+        (cookieHeader: null): ConsentState<ArrToUnion<Cs>>;
+    };
+    readonly isGranted: (category: Necessary | ArrToUnion<Cs>) => boolean;
+    readonly set: {
+        (choices: Partial<Choices<ArrToUnion<Cs>>>): void;
+        (choices: Partial<Choices<ArrToUnion<Cs>>>, cookieHeader: string): string;
+    };
+    readonly clear: {
+        (): void;
+        (cookieHeader: string): string;
+    };
+    readonly acceptAll: {
+        (): void;
+        (cookieHeader: string): string;
+    };
+    readonly rejectAll: {
+        (): void;
+        (cookieHeader: string): string;
+    };
+    readonly subscribe: (callback: () => void) => () => void;
+    readonly getServerSnapshot: () => ConsentState<ArrToUnion<Cs>>;
+    readonly guard: (
+        category: Necessary | ArrToUnion<Cs>,
+        onGrant: () => void,
+        onRevoke?: () => void,
+    ) => () => void;
+    readonly on: <K extends keyof ConsentEventMap<ArrToUnion<Cs>>>(
+        type: K,
+        handler: ConsentEventHandler<ArrToUnion<Cs>, K>,
+    ) => () => void;
+    readonly once: <K extends keyof ConsentEventMap<ArrToUnion<Cs>>>(
+        type: K,
+        handler: ConsentEventHandler<ArrToUnion<Cs>, K>,
+    ) => () => void;
+}
+
+/**
+ * Instance returned by `createConsentify` when `secret` is absent (the
+ * default). `getProof()` is synchronous and uses the FNV1a fallback signature.
+ */
+export interface ConsentifyInstance<Cs extends readonly string[]>
+    extends ConsentifyInstanceShared<Cs> {
+    readonly getProof: {
+        (): ConsentProof<ArrToUnion<Cs>> | null;
+        (cookieHeader: string): ConsentProof<ArrToUnion<Cs>> | null;
+    };
+}
+
+/**
+ * Instance returned by `createConsentify` when `secret` is provided. All
+ * proof-related methods are async (HMAC-SHA256).
+ */
+export interface ConsentifyAsyncInstance<Cs extends readonly string[]>
+    extends ConsentifyInstanceShared<Cs> {
+    readonly getProof: {
+        (): Promise<ConsentProof<ArrToUnion<Cs>> | null>;
+        (cookieHeader: string): Promise<ConsentProof<ArrToUnion<Cs>> | null>;
+    };
 }
 
 /**
@@ -182,9 +345,292 @@ function writeCookie(name: string, value: string, opt: CookieOpt): void {
     document.cookie = buildSetCookieHeader(name, value, opt);
 }
 
+// --- Environment + visitor id helpers ---
+const isBrowser = (): boolean =>
+    typeof window !== 'undefined' && typeof document !== 'undefined';
+
+const canLocalStorage = (): boolean => {
+    try { return isBrowser() && !!window.localStorage; } catch { return false; }
+};
+
+const VISITOR_KEY = 'consentify_visitor';
+
+function generateVisitorId(): string {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
+
+function readOrCreateStoredVisitorId(): string {
+    try {
+        const stored = window.localStorage.getItem(VISITOR_KEY);
+        if (stored) return stored;
+        const fresh = generateVisitorId();
+        window.localStorage.setItem(VISITOR_KEY, fresh);
+        return fresh;
+    } catch {
+        return generateVisitorId();
+    }
+}
+
+async function resolveVisitorId(source?: VisitorIdSource): Promise<string> {
+    if (typeof source === 'string') return source;
+    if (typeof source === 'function') {
+        const result = source();
+        return typeof result === 'string' ? result : await result;
+    }
+    if (canLocalStorage()) return readOrCreateStoredVisitorId();
+    return '';
+}
+
+// --- HMAC-SHA256 signer + verifyProof ---
+const toHex = (buf: ArrayBuffer): string =>
+    Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
+
+async function hmacSign(secret: string, payload: string): Promise<string> {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+        'raw', enc.encode(secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false, ['sign'],
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(payload));
+    return toHex(sig);
+}
+
+/**
+ * Verifies an HMAC-SHA256-signed `ConsentProof`. Re-computes the signature
+ * from `{policy, givenAt, choices}` using `secret` and compares to
+ * `proof.signature`. Returns `false` on mismatch or on any crypto error.
+ * FNV1a proofs (the deprecated fallback) will not verify here.
+ */
+export async function verifyProof<T extends UserCategory>(
+    proof: ConsentProof<T>,
+    secret: string,
+): Promise<boolean> {
+    try {
+        const body = { policy: proof.policy, givenAt: proof.givenAt, choices: proof.choices };
+        const expected = await hmacSign(secret, stableStringify(body));
+        return expected === proof.signature;
+    } catch {
+        return false;
+    }
+}
+
+// --- Mode B: SiteConfig fetch from CDN ---
+interface SiteConfig {
+    categories: readonly string[];
+    policyIdentifier: string;
+    mode?: ConsentMode;
+    consentMaxAgeDays?: number;
+}
+
+const DEFAULT_CONFIG_ENDPOINT = 'https://cdn.consentify.dev';
+const DEFAULT_INGEST_ENDPOINT = 'https://ingest.consentify.dev';
+const EVENT_BUFFER_KEY = 'consentify_event_buffer';
+
+type CloudAction = 'accept_all' | 'reject_all' | 'customize';
+
+function deriveCloudAction<T extends UserCategory>(
+    state: ConsentState<T>,
+    categories: readonly string[],
+): CloudAction {
+    if (state.decision !== 'decided') return 'customize';
+    const choices = state.snapshot.choices as Record<string, boolean>;
+    const userCats = categories.filter(c => c !== 'necessary');
+    if (userCats.every(c => choices[c] === true)) return 'accept_all';
+    if (userCats.every(c => !choices[c])) return 'reject_all';
+    return 'customize';
+}
+
+interface BufferedEvent { url: string; body: string; apiKey?: string }
+
+function readPendingEvent(): BufferedEvent | null {
+    if (!canLocalStorage()) return null;
+    try {
+        const raw = window.localStorage.getItem(EVENT_BUFFER_KEY);
+        return raw ? JSON.parse(raw) as BufferedEvent : null;
+    } catch { return null; }
+}
+function savePendingEvent(evt: BufferedEvent): void {
+    if (!canLocalStorage()) return;
+    try {
+        window.localStorage.setItem(EVENT_BUFFER_KEY, JSON.stringify(evt));
+    } catch (err) {
+        console.warn('[consentify] Could not persist pending cloud event:', err);
+    }
+}
+const dropEvent = () => { if (canLocalStorage()) try { window.localStorage.removeItem(EVENT_BUFFER_KEY); } catch {} };
+
+// fetch with keepalive survives page unload on modern browsers, so a separate
+// navigator.sendBeacon path is unnecessary here.
+function postCloudEvent(evt: BufferedEvent): Promise<boolean> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (evt.apiKey) headers['X-API-Key'] = evt.apiKey;
+    return fetch(evt.url, { method: 'POST', headers, body: evt.body, keepalive: true })
+        .then(res => res.ok)
+        .catch(() => false);
+}
+
+interface StartCloudReportingOptions {
+    siteId: string;
+    apiKey?: string;
+    ingestEndpoint: string;
+}
+
+function startCloudReporting<Cs extends readonly string[]>(
+    instance: ConsentifyInstance<Cs> | ConsentifyAsyncInstance<Cs>,
+    opts: StartCloudReportingOptions,
+): () => void {
+    if (!isBrowser()) return () => {};
+    const url = `${opts.ingestEndpoint.replace(/\/$/, '')}/v1/events`;
+    const categories = instance.policy.categories;
+    let lastKey = '';
+
+    // Flush any pending event left over from a previous session. Whether the
+    // retry succeeds or fails, drop it - no infinite re-queue.
+    const pending = readPendingEvent();
+    if (pending) void postCloudEvent(pending).finally(dropEvent);
+
+    const visitorHash = canLocalStorage() ? readOrCreateStoredVisitorId() : generateVisitorId();
+
+    const send = (state: ConsentState<ArrToUnion<Cs>>): void => {
+        if (state.decision !== 'decided') return;
+        const choices = state.snapshot.choices as Record<string, boolean>;
+        const key = state.snapshot.policy + ':' + JSON.stringify(choices);
+        if (key === lastKey) return;
+        lastKey = key;
+        // Payload key is `visitorHash` to match the ingest-endpoint contract;
+        // the SDK config calls it `visitorId` everywhere else.
+        const body = JSON.stringify({
+            siteId: opts.siteId,
+            action: deriveCloudAction(state, categories),
+            categories: choices,
+            visitorHash,
+            policyVersion: state.snapshot.policy,
+            ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
+        });
+        const evt: BufferedEvent = { url, body, apiKey: opts.apiKey };
+        void (async () => {
+            const ok = await postCloudEvent(evt);
+            if (ok) dropEvent(); else savePendingEvent(evt);
+        })();
+    };
+
+    const current = instance.get();
+    if (current.decision === 'decided') send(current);
+    return instance.subscribe(() => { send(instance.get()); });
+}
+
+async function fetchSiteConfig(
+    siteId: string,
+    configEndpoint: string,
+): Promise<SiteConfig> {
+    const base = configEndpoint.replace(/\/$/, '');
+    try {
+        const latestRes = await fetch(`${base}/config/${siteId}/latest.json`);
+        if (!latestRes.ok) {
+            throw new Error(`latest.json responded with ${latestRes.status}`);
+        }
+        const latest = await latestRes.json() as { current?: string };
+        if (!latest || typeof latest.current !== 'string' || !latest.current) {
+            throw new Error('latest.json is missing `current` hash');
+        }
+        const cfgRes = await fetch(`${base}/config/${siteId}/${latest.current}.json`);
+        if (!cfgRes.ok) {
+            throw new Error(`${latest.current}.json responded with ${cfgRes.status}`);
+        }
+        const cfg = await cfgRes.json() as Partial<SiteConfig>;
+        if (!cfg || !Array.isArray(cfg.categories) || typeof cfg.policyIdentifier !== 'string') {
+            throw new Error('SiteConfig is malformed');
+        }
+        return {
+            categories: cfg.categories,
+            policyIdentifier: cfg.policyIdentifier,
+            mode: cfg.mode,
+            consentMaxAgeDays: cfg.consentMaxAgeDays,
+        };
+    } catch (cause) {
+        throw new ConsentifyConfigError(
+            `[consentify] Failed to fetch SiteConfig for "${siteId}"`,
+            { cause },
+        );
+    }
+}
+
 // --- Unified Factory (single entry point) ---
-export function createConsentify<Cs extends readonly string[]>(init: CreateConsentifyInit<Cs>) {
+/**
+ * Self-hosted mode with HMAC-SHA256 proofs: `secret` is set. Returns an
+ * instance whose `getProof()` is async. Server-only — passing `secret` in a
+ * browser context throws `ConsentifyConfigError`.
+ */
+export function createConsentify<Cs extends readonly string[]>(
+    init: CreateConsentifyInit<Cs> & { secret: string; siteId?: never },
+): ConsentifyAsyncInstance<Cs>;
+/**
+ * Self-hosted mode (default): synchronous factory. `getProof()` uses the
+ * deprecated FNV1a fallback.
+ */
+export function createConsentify<Cs extends readonly string[]>(
+    init: CreateConsentifyInit<Cs> & { siteId?: never },
+): ConsentifyInstance<Cs>;
+/**
+ * Cloud / SaaS mode: async factory that fetches SiteConfig from the CDN and
+ * auto-enables event reporting to the ingest endpoint.
+ */
+export function createConsentify(
+    init: CloudInit & { policy?: never },
+): Promise<ConsentifyInstance<readonly string[]> | ConsentifyAsyncInstance<readonly string[]>>;
+export function createConsentify(
+    init: CreateConsentifyInit<readonly string[]> | CloudInit,
+): ConsentifyInstance<readonly string[]>
+   | ConsentifyAsyncInstance<readonly string[]>
+   | Promise<ConsentifyInstance<readonly string[]> | ConsentifyAsyncInstance<readonly string[]>> {
+    if ('siteId' in init && typeof (init as CloudInit).siteId === 'string') {
+        return createCloudInstance(init as CloudInit);
+    }
+    return createSelfHostedInstance(init as CreateConsentifyInit<readonly string[]>);
+}
+
+async function createCloudInstance(
+    init: CloudInit,
+): Promise<ConsentifyInstance<readonly string[]> | ConsentifyAsyncInstance<readonly string[]>> {
+    const configEndpoint = init.endpoints?.config ?? DEFAULT_CONFIG_ENDPOINT;
+    const ingestEndpoint = init.endpoints?.ingest ?? DEFAULT_INGEST_ENDPOINT;
+    const siteCfg = await fetchSiteConfig(init.siteId, configEndpoint);
+    const merged: CreateConsentifyInit<readonly string[]> = {
+        policy: {
+            categories: siteCfg.categories,
+            identifier: siteCfg.policyIdentifier,
+        },
+        cookie: init.cookie,
+        mode: init.mode ?? siteCfg.mode,
+        consentMaxAgeDays: init.consentMaxAgeDays ?? siteCfg.consentMaxAgeDays,
+        expirationWarningDays: init.expirationWarningDays,
+        storage: init.storage,
+        secret: init.secret,
+        adapter: init.adapter,
+        visitorId: init.visitorId,
+    };
+    const instance = createSelfHostedInstance(merged);
+    if (isBrowser()) {
+        startCloudReporting(instance, {
+            siteId: init.siteId,
+            apiKey: init.apiKey,
+            ingestEndpoint,
+        });
+    }
+    return instance;
+}
+
+function createSelfHostedInstance<Cs extends readonly string[]>(
+    init: CreateConsentifyInit<Cs>,
+): ConsentifyInstance<Cs> | ConsentifyAsyncInstance<Cs> {
     type T = ArrToUnion<Cs>;
+    if (init.secret && isBrowser()) {
+        throw new ConsentifyConfigError(
+            '[consentify] `secret` is server-only: do not ship HMAC secrets to the browser',
+        );
+    }
     const policyHash = init.policy.identifier ?? hashPolicy(init.policy.categories);
     const cookieName = init.cookie?.name ?? DEFAULT_COOKIE;
     const sameSite = init.cookie?.sameSite ?? 'Lax';
@@ -231,39 +677,45 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         return c;
     };
 
-    const buildProof = (snapshot: Snapshot<T>): ConsentProof<T> => {
+    const hasSecret = typeof init.secret === 'string' && init.secret.length > 0;
+    const secret = init.secret ?? '';
+
+    const buildProofSync = (snapshot: Snapshot<T>): ConsentProof<T> => {
         const body = { policy: snapshot.policy, givenAt: snapshot.givenAt, choices: snapshot.choices };
         return { ...body, signature: fnv1a(stableStringify(body)) };
     };
 
-    // --- client-side storage helpers ---
-    const isBrowser = () => typeof window !== 'undefined' && typeof document !== 'undefined';
-    const canLocal = () => { try { return isBrowser() && !!window.localStorage; } catch { return false; } };
+    const buildProofAsync = async (snapshot: Snapshot<T>): Promise<ConsentProof<T>> => {
+        const body = { policy: snapshot.policy, givenAt: snapshot.givenAt, choices: snapshot.choices };
+        const signature = await hmacSign(secret, stableStringify(body));
+        return { ...body, signature };
+    };
 
+    // --- client-side storage helpers ---
     const readFromStore = (kind: StorageKind): string | null => {
         switch (kind) {
             case 'cookie': return readCookie(cookieName);
-            case 'localStorage': try { return canLocal() ? window.localStorage.getItem(cookieName) : null; } catch (err) { console.warn('[consentify] localStorage read failed:', err); return null; }
+            case 'localStorage': try { return canLocalStorage() ? window.localStorage.getItem(cookieName) : null; } catch (err) { console.warn('[consentify] localStorage read failed:', err); return null; }
             default: return null;
         }
     };
     const writeToStore = (kind: StorageKind, value: string) => {
         switch (kind) {
             case 'cookie': writeCookie(cookieName, value, cookieCfg); break;
-            case 'localStorage': try { if (canLocal()) window.localStorage.setItem(cookieName, value); } catch (err) { console.warn('[consentify] localStorage write failed:', err); } break;
+            case 'localStorage': try { if (canLocalStorage()) window.localStorage.setItem(cookieName, value); } catch (err) { console.warn('[consentify] localStorage write failed:', err); } break;
         }
     };
     const clearCookieHeader = () => buildSetCookieHeader(cookieName, '', { ...cookieCfg, maxAgeSec: 0 });
     const clearStore = (kind: StorageKind) => {
         switch (kind) {
             case 'cookie': if (isBrowser()) document.cookie = clearCookieHeader(); break;
-            case 'localStorage': try { if (canLocal()) window.localStorage.removeItem(cookieName); } catch (err) { console.warn('[consentify] localStorage clear failed:', err); } break;
+            case 'localStorage': try { if (canLocalStorage()) window.localStorage.removeItem(cookieName); } catch (err) { console.warn('[consentify] localStorage clear failed:', err); } break;
         }
     };
     const firstAvailableStore = (): StorageKind => {
         for (const k of storageOrder) {
             if (k === 'cookie') return 'cookie';
-            if (k === 'localStorage' && canLocal()) return 'localStorage';
+            if (k === 'localStorage' && canLocalStorage()) return 'localStorage';
         }
         return 'cookie';
     };
@@ -407,6 +859,58 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     }
     // ======================================================
 
+    // ---- Adapter + visitor id ----
+    // Visitor id is resolved lazily and cached. Adapter `save`/`load` are
+    // fire-and-forget: failures are logged but never bubble up into the
+    // consent flow or throw from `client.set`.
+    const adapter = init.adapter;
+    let visitorIdPromise: Promise<string> | null = null;
+    const getVisitorId = (): Promise<string> => {
+        if (!visitorIdPromise) visitorIdPromise = resolveVisitorId(init.visitorId);
+        return visitorIdPromise;
+    };
+
+    const runAdapterSave = (snapshot: Snapshot<T>): void => {
+        if (!adapter) return;
+        void (async () => {
+            try {
+                const visitorId = await getVisitorId();
+                const proof = hasSecret
+                    ? await buildProofAsync(snapshot)
+                    : buildProofSync(snapshot);
+                await adapter.save({ visitorId, snapshot, proof });
+            } catch (err) {
+                console.warn('[consentify] adapter.save failed:', err);
+            }
+        })();
+    };
+
+
+    // Hydrate from adapter on init (browser only, background, local wins on conflict).
+    if (adapter && isBrowser()) {
+        void (async () => {
+            try {
+                const visitorId = await getVisitorId();
+                const remote = await adapter.load(visitorId);
+                if (!remote || !isValidSnapshot<T>(remote)) return;
+                if (remote.policy !== policyHash) return;
+                if (isExpired(remote.givenAt)) return;
+                // Only hydrate if local storage is still empty - never override
+                // a decision the user already made in this browser.
+                if (readClient()) return;
+                const from = cachedState;
+                writeClientRaw(enc(remote));
+                syncState();
+                notifyListeners();
+                emit('change', { from, to: cachedState, timestamp: Date.now() });
+                checkExpiring();
+                bc?.postMessage(null);
+            } catch (err) {
+                console.warn('[consentify] adapter.load failed:', err);
+            }
+        })();
+    }
+
     // ---- client API
     function clientGet(): ConsentState<T>;
     function clientGet(category: Necessary | T): boolean;
@@ -437,6 +941,7 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
                 emit('change', { from, to: cachedState, timestamp: Date.now() });
                 checkExpiring();
                 bc?.postMessage(null);
+                runAdapterSave(next);
             }
         },
 
@@ -523,14 +1028,14 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
     function flatRejectAll(cookieHeader: string): string;
     function flatRejectAll(cookieHeader?: string): string | void { return flatBulkSet(false, cookieHeader); }
 
-    function flatGetProof(): ConsentProof<T> | null;
-    function flatGetProof(cookieHeader: string): ConsentProof<T> | null;
-    function flatGetProof(cookieHeader?: string): ConsentProof<T> | null {
+    type ProofResult = ConsentProof<T> | null;
+    function flatGetProof(cookieHeader?: string): ProofResult | Promise<ProofResult> {
         const state = typeof cookieHeader === 'string' ? server.get(cookieHeader) : cachedState;
-        return state.decision === 'decided' ? buildProof(state.snapshot) : null;
+        if (state.decision !== 'decided') return hasSecret ? Promise.resolve(null) : null;
+        return hasSecret ? buildProofAsync(state.snapshot) : buildProofSync(state.snapshot);
     }
 
-    return {
+    const instance = {
         policy: {
             categories: init.policy.categories,
             identifier: policyHash,
@@ -553,7 +1058,8 @@ export function createConsentify<Cs extends readonly string[]>(init: CreateConse
         guard: client.guard,
         on,
         once,
-    } as const;
+    };
+    return instance as unknown as ConsentifyInstance<Cs> | ConsentifyAsyncInstance<Cs>;
 }
 
 // Common predefined category names you can reuse in your policy.

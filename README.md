@@ -329,19 +329,29 @@ enableDebug(consent, {
 });
 ```
 
-### `enableCloud(instance, options)`
+### Consentify Dev / Cloud reporting (built into core)
 
-Connects consent changes to the Consentify SaaS analytics API (or any custom endpoint).
+Cloud analytics now lives directly in `@consentify/core` — pass `siteId` to
+`createConsentify` and the factory becomes async, fetches your SiteConfig from
+the CDN, and starts event reporting automatically.
 
 ```ts
-import { enableCloud } from '@consentify/cloud';
+import { createConsentify } from '@consentify/core';
 
-const dispose = enableCloud(consent, {
+const consent = await createConsentify({
   siteId: 'your-site-id',
-  apiKey: 'sk_live_...',         // optional
-  endpoint: 'https://consentify.dev/api',  // default
+  apiKey: 'sk_live_...',  // optional
+  // optional endpoint overrides:
+  endpoints: {
+    config: 'https://cdn.consentify.dev',
+    ingest: 'https://ingest.consentify.dev',
+  },
 });
 ```
+
+> **Note:** The separate `@consentify/cloud` package is deprecated as of
+> `v2.0.0` and is a no-op. Remove it from your `package.json` and move the
+> options to `createConsentify({ siteId, apiKey })`.
 
 ### Typed Events
 
@@ -454,14 +464,16 @@ The `'necessary'` category is always `true` and cannot be disabled. When you cha
 
 | Package | Description |
 |---------|-------------|
-| [@consentify/core](./packages/core) | Headless consent SDK -- TypeScript-first, SSR-safe, zero dependencies |
+| [@consentify/core](./packages/core) | Headless consent SDK -- TypeScript-first, SSR-safe, zero dependencies. Includes built-in Consentify Dev mode (`createConsentify({ siteId })`). |
 | [@consentify/react](./packages/react) | React hook for @consentify/core |
-| [@consentify/cloud](./packages/cloud) | Cloud analytics adapter -- connects consent events to Consentify SaaS |
 | [create-consentify](./packages/create-consentify) | `npx` scaffolder -- wires the SDK into Next.js, Vite, Remix, Astro, or vanilla projects |
+| ~~[@consentify/cloud](./packages/cloud)~~ | **Deprecated (v2.0.0, no-op shell).** Cloud functionality moved into `@consentify/core` Mode B. |
 
-## Coming Soon: Consentify SaaS
+## Coming Soon: Consentify Dev
 
-A hosted consent management platform with a visual banner editor, analytics dashboard, and compliance reporting.
+A hosted consent management platform -- the tool developers and marketers use
+to configure policies, translate banners, and watch opt-in rates. It pairs
+with this SDK via `createConsentify({ siteId })`.
 
 - **Visual banner builder** -- drag-and-drop consent UI
 - **Consent analytics dashboard** -- see opt-in/out rates
@@ -472,7 +484,7 @@ A hosted consent management platform with a visual banner editor, analytics dash
 
 ## Roadmap
 
-- SaaS bidirectional sync -- fetch policy config from Consentify SaaS dashboard
+- Consentify Dev bidirectional sync -- fetch policy config from the dashboard
 - Geo-aware consent defaults -- show banners only where required
 
 ## Support

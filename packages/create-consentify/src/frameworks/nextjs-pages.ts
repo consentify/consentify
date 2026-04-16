@@ -22,10 +22,8 @@ export const nextjsPages: FrameworkScaffolder = {
         if (env) files.push({ path: '.env.local.example', content: env });
         return files;
     },
-    runtimeDeps(ctx) {
-        const deps = ['@consentify/core', '@consentify/react'];
-        if (ctx.useSaas) deps.push('@consentify/cloud');
-        return deps;
+    runtimeDeps() {
+        return ['@consentify/core', '@consentify/react'];
     },
     instructions(ctx) {
         const prefix = ctx.srcDir ? 'src/' : '';

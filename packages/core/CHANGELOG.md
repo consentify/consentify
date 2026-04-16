@@ -1,5 +1,32 @@
 # @consentify/core
 
+## 2.4.0
+
+### Minor Changes
+
+- Add three-mode `createConsentify()` entry point. The factory now branches on
+  its input:
+
+  - **Self-hosted (sync, default)**: unchanged behaviour, plus optional
+    `secret` (HMAC-SHA256 proofs, server-only), optional `adapter` (custom
+    storage backend), and optional `visitorId` override.
+  - **SaaS / Consentify Dev (async)**: `createConsentify({ siteId, apiKey })`
+    returns `Promise<ConsentifyInstance>`. Fetches `SiteConfig` from
+    `cdn.consentify.dev` and auto-enables event reporting to
+    `ingest.consentify.dev`. Endpoints are overridable.
+
+  New exports: `ConsentAdapter`, `VisitorIdSource`, `CloudInit`,
+  `ConsentifyInstance`, `ConsentifyAsyncInstance`, `ConsentifyConfigError`,
+  and `verifyProof(proof, secret)`.
+
+  Build pipeline: the ESM `dist/index.js` is now minified via `esbuild`
+  (tsc emits `.d.ts` only). Size budget: ESM 4.71 kB / IIFE min 4.93 kB,
+  both under 5 kB gzipped.
+
+  No breaking changes to existing APIs. Projects that were previously using
+  `@consentify/cloud` should migrate to `createConsentify({ siteId })` -- the
+  cloud package is now deprecated.
+
 ## 2.2.0
 
 ### Minor Changes

@@ -1,142 +1,55 @@
 # @consentify/cloud
 
-Cloud adapter for [@consentify/core](../core/) - connects the consent SDK to Consentify SaaS analytics.
+> **Deprecated.** This package is a no-op as of `v2.0.0`. It is kept in the
+> registry only because npm blocks unpublishing packages older than 72 hours.
 
-## Overview
+All cloud functionality (event reporting, visitor hash, deduplication, retry
+buffer) has moved to `@consentify/core` and is automatically enabled when you
+construct an instance with a `siteId`.
 
-`@consentify/cloud` is a lightweight adapter (~2KB gzipped) that bridges your local consent state with Consentify SaaS cloud analytics. It subscribes to consent changes and automatically posts events to your SaaS backend.
+## Migration
 
-## Installation
+**Before:**
 
-Fastest path: scaffold a SaaS-connected setup with `npx create-consentify@latest` and answer "Yes" when asked to connect to the dashboard.
-
-Or install directly:
-
-```bash
-npm install @consentify/cloud @consentify/core
-```
-
-## Usage
-
-```typescript
+```ts
 import { createConsentify } from '@consentify/core';
 import { enableCloud } from '@consentify/cloud';
 
-// Create a consent instance
 const consent = createConsentify({
-  policy: {
-    categories: ['analytics', 'marketing'],
-  },
+  policy: { categories: ['analytics', 'marketing'] as const },
 });
 
-// Enable cloud analytics
-const unsubscribe = enableCloud(consent, {
-  siteId: 'your-site-id',
-  apiKey: 'optional-api-key',
-  endpoint: 'https://api.consentify.dev', // optional, defaults to https://consentify.dev/api
-});
-
-// Later, if needed:
-unsubscribe();
+enableCloud(consent, { siteId: 'site_xxx', apiKey: 'ck_xxx' });
 ```
 
-## How it works
-
-1. **Initialization**: `enableCloud()` posts the current consent state immediately (if already decided)
-2. **Subscription**: Subscribes to future consent changes via `instance.subscribe()`
-3. **Event posting**: When consent changes, posts an event to `/api/consent/events`
-4. **Deduplication**: Only posts when choices or policy version actually change
-5. **Visitor tracking**: Generates and persists a visitor hash in `localStorage` for analytics
-
-## Silent failure
-
-Network errors are silently swallowed and never block consent operations. This ensures consent logic remains fast and responsive even if analytics is unavailable.
-
-## Visitor hash persistence
-
-The visitor hash is stored in `localStorage` under the key `consentify_visitor`. This allows Consentify SaaS to track consent events across page loads and sessions.
-
-If `localStorage` is unavailable (private browsing, blocked, etc.), a temporary hash is generated per session.
-
-## API endpoints
-
-### POST /api/consent/events
-
-**Headers:**
-- `Content-Type: application/json`
-- `X-API-Key: [optional]`
-
-**Body:**
-```json
-{
-  "siteId": "uuid",
-  "action": "accept_all" | "reject_all" | "customize",
-  "categories": {
-    "necessary": true,
-    "analytics": true,
-    "marketing": false
-  },
-  "visitorHash": "uuid",
-  "policyVersion": "abc123"
-}
-```
-
-**Action derivation:**
-- `accept_all`: All non-necessary categories granted
-- `reject_all`: All non-necessary categories denied
-- `customize`: Mixed/partial choices
-
-## Works with Core Features
-
-### acceptAll / rejectAll
-
-The cloud adapter automatically detects bulk actions:
+**After:**
 
 ```ts
-consent.acceptAll();   // cloud posts action: 'accept_all'
-consent.rejectAll();   // cloud posts action: 'reject_all'
-consent.set({ analytics: true, marketing: false }); // action: 'customize'
-```
+import { createConsentify } from '@consentify/core';
 
-### Consent Proof
-
-Get a tamper-evident receipt alongside cloud events:
-
-```ts
-consent.on('change', () => {
-  const proof = consent.getProof();
-  // { policy, givenAt, choices, signature } - for local audit trails
+const consent = await createConsentify({
+  siteId: 'site_xxx',
+  apiKey: 'ck_xxx',
 });
 ```
 
-### Consent Mode (opt-in / opt-out)
+`createConsentify({ siteId })` is async: it fetches your `SiteConfig` from the
+CDN, derives `policy.categories` + `mode` from it, and starts the cloud event
+reporter automatically. Any options you would have passed to `enableCloud` are
+supplied at the `createConsentify` call site instead.
 
-Cloud adapter works with both GDPR and CCPA modes:
+## What happens if you keep calling `enableCloud`?
 
-```ts
-const consent = createConsentify({
-  policy: { categories: ['analytics'] as const },
-  mode: 'opt-out', // CCPA: granted by default
-});
-enableCloud(consent, { siteId: 'site-1' });
+It logs a deprecation warning and returns a no-op disposer. No network
+requests. No visitor hash is generated. Nothing is reported.
+
+Remove the dependency from your `package.json` at your earliest convenience:
+
+```bash
+pnpm remove @consentify/cloud
+# or
+npm uninstall @consentify/cloud
 ```
 
-## TypeScript
-
-Full TypeScript support. The adapter is generic over your category types:
-
-```typescript
-type MyCategories = 'analytics' | 'marketing' | 'preferences';
-
-const consent = createConsentify({
-  policy: {
-    categories: ['analytics', 'marketing', 'preferences'],
-  },
-});
-
-enableCloud(consent, { siteId: 'site-1' });
-```
-
-## License
-
-MIT
+See the main [consentify repo](https://github.com/consentify/consentify) for
+full documentation of `@consentify/core` Mode B.

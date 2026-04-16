@@ -42,12 +42,14 @@ describe('generateConsentConfig', () => {
         expect(out).not.toMatch(/defaults\s*:/);
     });
 
-    it('wires SaaS with Next.js-style env prefix', () => {
+    it('wires SaaS via Mode B with Next.js-style env prefix', () => {
         const out = generateConsentConfig(ctx({ useSaas: true, siteId: 'site_abc' }));
-        expect(out).toContain(`import { enableCloud } from '@consentify/cloud';`);
-        expect(out).toContain(`enableCloud(consent, {`);
-        expect(out).toContain(`process.env.NEXT_PUBLIC_CONSENTIFY_SITE_ID!`);
-        expect(out).toContain(`typeof window !== 'undefined'`);
+        expect(out).not.toContain(`@consentify/cloud`);
+        expect(out).not.toContain(`enableCloud`);
+        expect(out).toContain(`import { createConsentify } from '@consentify/core';`);
+        expect(out).toContain(`await createConsentify({`);
+        expect(out).toContain(`siteId: process.env.NEXT_PUBLIC_CONSENTIFY_SITE_ID!`);
+        expect(out).toContain(`apiKey: process.env.NEXT_PUBLIC_CONSENTIFY_API_KEY`);
     });
 
     it('uses VITE_ prefix for vite-react', () => {
@@ -58,6 +60,11 @@ describe('generateConsentConfig', () => {
     it('uses PUBLIC_ prefix for astro', () => {
         const out = generateConsentConfig(ctx({ framework: 'astro', useSaas: true }));
         expect(out).toContain(`process.env.PUBLIC_CONSENTIFY_SITE_ID!`);
+    });
+
+    it('omits categories literal in SaaS mode (fetched from SiteConfig)', () => {
+        const out = generateConsentConfig(ctx({ useSaas: true }));
+        expect(out).not.toContain(`categories:`);
     });
 
     it('uses bare CONSENTIFY_SITE_ID (no prefix) for remix', () => {

@@ -11,25 +11,6 @@ function categoriesLiteral(categories: readonly string[]): string {
     return categories.map((c) => `'${c}'`).join(', ');
 }
 
-function cloudBlock(ctx: TemplateContext): string {
-    if (!ctx.useSaas) return '';
-    const prefix = envPrefix(ctx.framework);
-    const siteIdExpr = prefix
-        ? `process.env.${prefix}CONSENTIFY_SITE_ID!`
-        : `process.env.CONSENTIFY_SITE_ID!`;
-    const apiKeyExpr = prefix
-        ? `process.env.${prefix}CONSENTIFY_API_KEY`
-        : `process.env.CONSENTIFY_API_KEY`;
-    return `
-if (typeof window !== 'undefined') {
-    enableCloud(consent, {
-        siteId: ${siteIdExpr},
-        apiKey: ${apiKeyExpr},
-    });
-}
-`;
-}
-
 function gcmBlock(ctx: TemplateContext): string {
     if (!ctx.enableGcm) return '';
     return `
@@ -42,12 +23,34 @@ ${formatGcmMapping(ctx.categories)}
 }
 
 export function generateConsentConfig(ctx: TemplateContext): string {
-    const header = [
-        coreImports(ctx),
-        ctx.useSaas ? `import { enableCloud } from '@consentify/cloud';` : null,
-    ]
-        .filter(Boolean)
-        .join('\n');
+    const header = coreImports(ctx);
+
+    if (ctx.useSaas) {
+        // Mode B (SaaS): createConsentify becomes async and fetches SiteConfig
+        // from the CDN. `policy.categories` comes from the dashboard; local
+        // overrides (`mode`) take precedence over the fetched config.
+        const prefix = envPrefix(ctx.framework);
+        const siteIdExpr = prefix
+            ? `process.env.${prefix}CONSENTIFY_SITE_ID!`
+            : `process.env.CONSENTIFY_SITE_ID!`;
+        const apiKeyExpr = prefix
+            ? `process.env.${prefix}CONSENTIFY_API_KEY`
+            : `process.env.CONSENTIFY_API_KEY`;
+        const body = `
+// SaaS mode: categories + policy version are fetched from consentify.dev on init.
+// Top-level await requires ESM ("type": "module") - standard for modern toolchains.
+export const consent = await createConsentify({
+    siteId: ${siteIdExpr},
+    apiKey: ${apiKeyExpr},
+    mode: '${ctx.mode}',
+});
+`;
+        return [header, body, gcmBlock(ctx)]
+            .filter((s) => s.trim().length > 0)
+            .join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trimEnd() + '\n';
+    }
 
     const body = `
 export const consent = createConsentify({
@@ -58,7 +61,7 @@ export const consent = createConsentify({
 });
 `;
 
-    return [header, body, gcmBlock(ctx), cloudBlock(ctx)]
+    return [header, body, gcmBlock(ctx)]
         .filter((s) => s.trim().length > 0)
         .join('\n')
         .replace(/\n{3,}/g, '\n\n')

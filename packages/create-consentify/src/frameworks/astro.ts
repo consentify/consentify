@@ -45,10 +45,9 @@ export const astro: FrameworkScaffolder = {
         if (env) files.push({ path: '.env.example', content: env });
         return files;
     },
-    runtimeDeps(ctx, cwd) {
+    runtimeDeps(_ctx, cwd) {
         const deps = ['@consentify/core'];
         if (cwd && detectAstroReactIntegration(cwd)) deps.push('@consentify/react');
-        if (ctx.useSaas) deps.push('@consentify/cloud');
         return deps;
     },
     instructions(ctx) {

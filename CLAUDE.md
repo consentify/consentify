@@ -30,7 +30,7 @@ pnpm run size
 
 ## Publishing
 
-CI publishes on tags: `core-v*`, `react-v*`, `cloud-v*`, `create-consentify-v*`.
+CI publishes on tags: `core-v*`, `react-v*`, `create-consentify-v*`. (`@consentify/cloud` is deprecated and no longer released on a schedule — it ships only if we need to republish the no-op shell.)
 ```bash
 pnpm changeset           # Create changeset
 pnpm changeset version   # Version packages
@@ -51,17 +51,18 @@ git tag core-v1.0.0 && git push origin core-v1.0.0  # Trigger release
 
 ### Core Package (`packages/core`)
 
-Single-file SDK (`src/index.ts`) built around `createConsentify()` factory that returns separate `client` and `server` APIs:
+Single-file SDK (`src/index.ts`) built around `createConsentify()` factory. The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use; the `consent.server` and `consent.client` namespaces remain available for explicit access.
 
-- **Server API**: Reads/writes consent via raw `Cookie` headers (Node.js compatible)
-- **Client API**: Browser-side storage with React `useSyncExternalStore` support via `subscribe()` and `getServerSnapshot()`
+- **Server signatures**: Take/return raw `Cookie` / `Set-Cookie` header strings (Node.js compatible, no DOM)
+- **Client signatures**: Browser-side storage with React `useSyncExternalStore` support via `subscribe()` and `getServerSnapshot()`
 
 Key design patterns:
 - Policy versioning via hash - consent invalidates when categories change
 - `'necessary'` category is always `true` and cannot be disabled
 - Storage abstraction supports cookie (canonical) and localStorage (optional mirror)
 - State uses discriminated union: `{ decision: 'unset' }` | `{ decision: 'decided', snapshot }`
-- Typed event system: `on('change', handler)` / `once('change', handler)` / `on('expiring', handler)` for reactive adapters
+- Typed event system: `on(type, handler)` / `once(type, handler)` for events `'change' | 'clear' | 'expiring'`; emits after `notifyListeners`
+- `guard(category, onGrant, onRevoke?)` - headline integration primitive: runs `onGrant` immediately if consented or once consent is granted, optionally runs `onRevoke` on revocation. Returns a dispose function. Prefer this over hand-rolled `subscribe()` + `isGranted()` loops.
 - `enableDebug(instance)` - tree-shakeable debug adapter that logs consent changes via event system
 - `acceptAll()` / `rejectAll()` - convenience methods that set all user categories at once
 - `getProof()` - returns `ConsentProof` with FNV1a signature for audit trails
@@ -84,20 +85,15 @@ Key design patterns:
 - `typeof BroadcastChannel !== 'undefined'` is **not** sufficient alone — Node.js 18+ exposes it natively; always pair with `isBrowser()`
 - Server API is cookie-header only; `client.*` methods are browser-only
 
-### Cloud Adapter (`packages/cloud`)
+### Cloud (`packages/cloud`) — DEPRECATED
 
-Bridges `@consentify/core` instances to the SaaS consent analytics API:
-
-- **Entry**: `packages/cloud/src/index.ts` - `enableCloud(instance, options)` subscribes to consent changes and POSTs to `/api/consent/events`
-- **Options**: `siteId` (required), `endpoint` (API base URL), `apiKey` (optional)
-- **Publishing**: `cloud-v*` tags trigger npm release (alongside `core-v*`, `react-v*`)
-- **SaaS compatibility**: Works with the Consentify SaaS app at `https://consentify.dev/api/consent`
+`@consentify/cloud@2.0.0` is a no-op shell. `enableCloud()` only logs a deprecation warning and returns a no-op disposer. All cloud functionality (event reporting, visitor hash, dedup, retry buffer) lives in `@consentify/core` via `createConsentify({ siteId, apiKey })` (Mode B). The package is kept in the registry only because npm blocks unpublishing packages older than 72 hours.
 
 ### IIFE Bundle
 
 - Core includes an IIFE build: `dist/consentify.iife.js` and `dist/consentify.iife.min.js`
 - Built via esbuild, exposes all exports on `Consentify` global
-- Size budget: <5kb gzipped (currently 2.92kb)
+- Size budget: both `packages/core/dist/index.js` and `dist/consentify.iife.min.js` enforced at <5kb gzipped via `.size-limit.json`
 - For non-bundler environments (WordPress, static sites, CMS)
 
 ### React Package (`packages/react`)
@@ -118,7 +114,7 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 
 ### Testing
 
-- Test files: `packages/core/src/index.test.ts`, `packages/cloud/src/index.test.ts`, `packages/react/src/index.test.ts`, and `packages/create-consentify/src/__tests__/*.test.ts` (8 files covering templates, detection, frameworks, flags, gcm-mapping, provider output, safe writes, pm commands)
+- Test files: `packages/core/src/index.test.ts`, `packages/react/src/index.test.ts`, and `packages/create-consentify/src/__tests__/*.test.ts` (8 files covering templates, detection, frameworks, flags, gcm-mapping, provider output, safe writes, pm commands). `packages/cloud` has no tests - it is a deprecated no-op shell.
 - Root `vitest.config.ts` globs `packages/*/src/**/*.test.ts` - new workspace packages are auto-discovered, no per-package vitest config needed
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`

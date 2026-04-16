@@ -13,10 +13,9 @@ export const vanilla: FrameworkScaffolder = {
         ];
         return files;
     },
-    runtimeDeps(ctx) {
-        const deps = ['@consentify/core'];
-        if (ctx.useSaas) deps.push('@consentify/cloud');
-        return deps;
+    runtimeDeps() {
+        // SaaS (Mode B) lives in @consentify/core; no separate cloud package needed.
+        return ['@consentify/core'];
     },
     instructions(ctx) {
         const lines = [

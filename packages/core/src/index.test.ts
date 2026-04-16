@@ -1690,6 +1690,41 @@ describe('ConsentAdapter integration', () => {
         });
     });
 
+    it('rejects adapter.load data whose policy hash no longer matches (stale categories)', async () => {
+        const adapter = makeAdapter();
+        adapter._loaded = {
+            policy: 'stale-policy-hash-from-old-categories',
+            givenAt: new Date().toISOString(),
+            choices: { necessary: true, analytics: true } as any,
+        };
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: 'visitor-1',
+        });
+        // Give the background load a few ticks, then confirm state is still unset.
+        await new Promise(r => setTimeout(r, 20));
+        expect(c.get().decision).toBe('unset');
+    });
+
+    it('rejects adapter.load data that is already expired', async () => {
+        const adapter = makeAdapter();
+        const policy = hashPolicy(['analytics']);
+        adapter._loaded = {
+            policy,
+            givenAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString(),
+            choices: { necessary: true, analytics: true } as any,
+        };
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            consentMaxAgeDays: 30,
+            adapter,
+            visitorId: 'visitor-1',
+        });
+        await new Promise(r => setTimeout(r, 20));
+        expect(c.get().decision).toBe('unset');
+    });
+
     it('falls back to consentify_visitor localStorage key when no visitorId is provided', async () => {
         const adapter = makeAdapter();
         const c = createConsentify({
@@ -1944,5 +1979,44 @@ describe('Cloud mode (Mode B)', () => {
         await vi.waitFor(() => {
             expect(localStorage.getItem('consentify_event_buffer')).toBeNull();
         });
+    });
+
+    it('throws ConsentifyConfigError when the versioned config fetch returns non-200', async () => {
+        vi.stubGlobal('fetch', vi.fn((url: string) => {
+            if (url.endsWith('/latest.json')) {
+                return Promise.resolve(new Response(JSON.stringify({ current: 'h1' })));
+            }
+            // hash.json returns 404
+            return Promise.resolve(new Response('not found', { status: 404 }));
+        }));
+        await expect(createConsentify({
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test' },
+        })).rejects.toThrow(ConsentifyConfigError);
+    });
+
+    it('dedupes: same choices set twice only POSTs to ingest once', async () => {
+        vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createConsentify({
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => {
+            expect(spy.mock.calls.some(([url]) =>
+                typeof url === 'string' && url.includes('ingest.test'),
+            )).toBe(true);
+        });
+        const firstIngestCount = spy.mock.calls.filter(([url]) =>
+            typeof url === 'string' && url.includes('ingest.test'),
+        ).length;
+        // Same choices - should not re-POST
+        c.set({ analytics: true });
+        await new Promise(r => setTimeout(r, 20));
+        const secondIngestCount = spy.mock.calls.filter(([url]) =>
+            typeof url === 'string' && url.includes('ingest.test'),
+        ).length;
+        expect(secondIngestCount).toBe(firstIngestCount);
     });
 });

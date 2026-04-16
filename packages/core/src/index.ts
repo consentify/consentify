@@ -151,10 +151,9 @@ export type VisitorIdSource = string | (() => string | Promise<string>);
  * fails. The underlying error (if any) is attached as `cause`.
  */
 export class ConsentifyConfigError extends Error {
-    constructor(m: string, o?: { cause?: unknown }) {
-        super(m);
+    constructor(message: string, options?: ErrorOptions) {
+        super(message, options);
         this.name = 'ConsentifyConfigError';
-        if (o?.cause) (this as { cause?: unknown }).cause = o.cause;
     }
 }
 
@@ -454,7 +453,11 @@ function readPendingEvent(): BufferedEvent | null {
 }
 function savePendingEvent(evt: BufferedEvent): void {
     if (!canLocalStorage()) return;
-    try { window.localStorage.setItem(EVENT_BUFFER_KEY, JSON.stringify(evt)); } catch { /* ignore */ }
+    try {
+        window.localStorage.setItem(EVENT_BUFFER_KEY, JSON.stringify(evt));
+    } catch (err) {
+        console.warn('[consentify] Could not persist pending cloud event:', err);
+    }
 }
 const dropEvent = () => { if (canLocalStorage()) try { window.localStorage.removeItem(EVENT_BUFFER_KEY); } catch {} };
 
@@ -496,6 +499,8 @@ function startCloudReporting<Cs extends readonly string[]>(
         const key = state.snapshot.policy + ':' + JSON.stringify(choices);
         if (key === lastKey) return;
         lastKey = key;
+        // Payload key is `visitorHash` to match the ingest-endpoint contract;
+        // the SDK config calls it `visitorId` everywhere else.
         const body = JSON.stringify({
             siteId: opts.siteId,
             action: deriveCloudAction(state, categories),
@@ -559,21 +564,21 @@ async function fetchSiteConfig(
  * browser context throws `ConsentifyConfigError`.
  */
 export function createConsentify<Cs extends readonly string[]>(
-    init: CreateConsentifyInit<Cs> & { secret: string },
+    init: CreateConsentifyInit<Cs> & { secret: string; siteId?: never },
 ): ConsentifyAsyncInstance<Cs>;
 /**
  * Self-hosted mode (default): synchronous factory. `getProof()` uses the
  * deprecated FNV1a fallback.
  */
 export function createConsentify<Cs extends readonly string[]>(
-    init: CreateConsentifyInit<Cs>,
+    init: CreateConsentifyInit<Cs> & { siteId?: never },
 ): ConsentifyInstance<Cs>;
 /**
  * Cloud / SaaS mode: async factory that fetches SiteConfig from the CDN and
  * auto-enables event reporting to the ingest endpoint.
  */
 export function createConsentify(
-    init: CloudInit,
+    init: CloudInit & { policy?: never },
 ): Promise<ConsentifyInstance<readonly string[]> | ConsentifyAsyncInstance<readonly string[]>>;
 export function createConsentify(
     init: CreateConsentifyInit<readonly string[]> | CloudInit,
@@ -672,8 +677,6 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         return c;
     };
 
-    // Signature mode: HMAC-SHA256 when `secret` is set (Node-only by the guard
-    // above), FNV1a fallback otherwise.
     const hasSecret = typeof init.secret === 'string' && init.secret.length > 0;
     const secret = init.secret ?? '';
 

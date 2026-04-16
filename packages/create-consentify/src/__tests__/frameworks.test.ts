@@ -41,9 +41,10 @@ describe('nextjs-app scaffolder', () => {
         expect(deps).not.toContain('@consentify/cloud');
     });
 
-    it('adds @consentify/cloud only when SaaS enabled', () => {
+    it('never adds @consentify/cloud (deprecated - SaaS lives in @consentify/core Mode B)', () => {
         const deps = scaffolder.runtimeDeps(ctx({ framework: 'nextjs-app', useSaas: true }));
-        expect(deps).toContain('@consentify/cloud');
+        expect(deps).not.toContain('@consentify/cloud');
+        expect(deps).toContain('@consentify/core');
     });
 
     it('emits .env.local.example only in SaaS mode', () => {

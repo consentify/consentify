@@ -57,11 +57,11 @@ describe('installDeps', () => {
         await installDeps({
             cwd: '/tmp',
             pm: 'pnpm',
-            runtime: ['@consentify/core', '@consentify/react', '@consentify/cloud'],
+            runtime: ['@consentify/core', '@consentify/react'],
         });
         expect(execa).toHaveBeenCalledWith(
             'pnpm',
-            ['add', '@consentify/core', '@consentify/react', '@consentify/cloud'],
+            ['add', '@consentify/core', '@consentify/react'],
             expect.any(Object),
         );
     });

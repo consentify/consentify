@@ -17,7 +17,7 @@ Interactive wizard that:
 1. Asks you which framework you're using.
 2. Picks consent categories, mode (opt-in / opt-out), and optional Google Consent Mode v2 wiring.
 3. Optionally connects to the Consentify dashboard (analytics, visual editor).
-4. Installs `@consentify/core` (+ `@consentify/react` / `@consentify/cloud` when relevant).
+4. Installs `@consentify/core` (+ `@consentify/react` when relevant). Cloud reporting now lives in `@consentify/core` itself via `createConsentify({ siteId })`, so no separate cloud package is added.
 5. Writes a `lib/consent.ts` and a provider component for your framework.
 6. Prints the exact snippet to paste into your root layout / entry file.
 

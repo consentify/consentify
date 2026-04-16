@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createConsentify, defaultCategories, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, type ConsentifySubscribable, type ConsentState } from './index';
+import { createConsentify, defaultCategories, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, verifyProof, ConsentifyConfigError, type ConsentAdapter, type ConsentifySubscribable, type ConsentState, type ConsentProof, type Snapshot } from './index';
 
 // Helper to encode a snapshot as document.cookie value
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o));
@@ -1584,5 +1584,358 @@ describe('expiring event', () => {
         // Consent is already expired (40 days > 30 days max), so state should be unset
         expect(c.get().decision).toBe('unset');
         expect(handler).not.toHaveBeenCalled();
+    });
+});
+
+describe('ConsentAdapter integration', () => {
+    beforeEach(() => { clearAllCookies(); localStorage.clear(); });
+    afterEach(() => { clearAllCookies(); localStorage.clear(); vi.restoreAllMocks(); });
+
+    const makeAdapter = () => {
+        const saved: any[] = [];
+        const adapter: ConsentAdapter & { _saved: any[]; _loaded: Snapshot<any> | null } = {
+            _saved: saved,
+            _loaded: null,
+            async save(data) { saved.push(data); },
+            async load() { return this._loaded; },
+        };
+        return adapter;
+    };
+
+    it('calls adapter.save after client.set with snapshot + proof', async () => {
+        const adapter = makeAdapter();
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: 'visitor-1',
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        expect(adapter._saved[0].visitorId).toBe('visitor-1');
+        expect(adapter._saved[0].snapshot.choices.analytics).toBe(true);
+        expect(adapter._saved[0].proof.signature).toBeTypeOf('string');
+    });
+
+    it('hydrates from adapter.load when local state is unset', async () => {
+        const adapter = makeAdapter();
+        const policy = hashPolicy(['analytics']);
+        adapter._loaded = {
+            policy,
+            givenAt: new Date().toISOString(),
+            choices: { necessary: true, analytics: true } as any,
+        };
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: 'visitor-1',
+        });
+        await vi.waitFor(() => expect(c.get().decision).toBe('decided'));
+        expect(c.isGranted('analytics')).toBe(true);
+    });
+
+    it('does not override local state if already decided', async () => {
+        const adapter = makeAdapter();
+        const policy = hashPolicy(['analytics']);
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: 'visitor-1',
+        });
+        c.set({ analytics: false });
+        adapter._loaded = {
+            policy,
+            givenAt: new Date().toISOString(),
+            choices: { necessary: true, analytics: true } as any,
+        };
+        await new Promise(r => setTimeout(r, 20));
+        expect(c.isGranted('analytics')).toBe(false);
+    });
+
+    it('swallows adapter.save errors with console.warn', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const adapter: ConsentAdapter = {
+            async save() { throw new Error('DB down'); },
+            async load() { return null; },
+        };
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: 'visitor-1',
+        });
+        expect(() => c.set({ analytics: true })).not.toThrow();
+        await vi.waitFor(() => {
+            const hit = warn.mock.calls.some(args =>
+                typeof args[0] === 'string' && args[0].includes('adapter.save failed'),
+            );
+            expect(hit).toBe(true);
+        });
+    });
+
+    it('swallows adapter.load errors with console.warn', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const adapter: ConsentAdapter = {
+            async save() {},
+            async load() { throw new Error('DB down'); },
+        };
+        createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: 'visitor-1',
+        });
+        await vi.waitFor(() => {
+            const hit = warn.mock.calls.some(args =>
+                typeof args[0] === 'string' && args[0].includes('adapter.load failed'),
+            );
+            expect(hit).toBe(true);
+        });
+    });
+
+    it('falls back to consentify_visitor localStorage key when no visitorId is provided', async () => {
+        const adapter = makeAdapter();
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        expect(adapter._saved[0].visitorId).toBeTypeOf('string');
+        expect(adapter._saved[0].visitorId.length).toBeGreaterThan(0);
+        expect(localStorage.getItem('consentify_visitor')).toBe(adapter._saved[0].visitorId);
+    });
+});
+
+function withSimulatedServer<T>(fn: () => T | Promise<T>): Promise<T> {
+    const w = globalThis.window;
+    const d = globalThis.document;
+    // @ts-expect-error - simulating SSR
+    delete globalThis.window;
+    // @ts-expect-error - simulating SSR
+    delete globalThis.document;
+    const restore = () => { globalThis.window = w; globalThis.document = d; };
+    try {
+        return Promise.resolve(fn()).finally(restore);
+    } catch (err) {
+        restore();
+        throw err;
+    }
+}
+
+describe('HMAC-SHA256 proof', () => {
+    beforeEach(() => { clearAllCookies(); });
+    afterEach(() => { clearAllCookies(); vi.restoreAllMocks(); });
+
+    it('throws ConsentifyConfigError when secret is passed in a browser', () => {
+        expect(() => {
+            createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+            });
+        }).toThrow(ConsentifyConfigError);
+    });
+
+    it('getProof returns a Promise<ConsentProof> when secret is set (server)', async () => {
+        await withSimulatedServer(async () => {
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+            });
+            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
+            const match = /consentify=([^;]+)/.exec(setHeader);
+            const cookieHeader = 'consentify=' + match![1];
+            const proofPromise = c.getProof(cookieHeader);
+            expect(proofPromise).toBeInstanceOf(Promise);
+            const proof = await proofPromise;
+            expect(proof).not.toBeNull();
+            expect(proof!.signature).toBeTypeOf('string');
+            expect(proof!.signature.length).toBe(64);
+        });
+    });
+
+    it('verifyProof succeeds for a valid HMAC proof', async () => {
+        await withSimulatedServer(async () => {
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+            });
+            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
+            const match = /consentify=([^;]+)/.exec(setHeader);
+            const cookieHeader = 'consentify=' + match![1];
+            const proof = await c.getProof(cookieHeader);
+            expect(await verifyProof(proof!, 'dev-secret')).toBe(true);
+        });
+    });
+
+    it('verifyProof fails with wrong secret', async () => {
+        await withSimulatedServer(async () => {
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+            });
+            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
+            const match = /consentify=([^;]+)/.exec(setHeader);
+            const cookieHeader = 'consentify=' + match![1];
+            const proof = await c.getProof(cookieHeader);
+            expect(await verifyProof(proof!, 'wrong-secret')).toBe(false);
+        });
+    });
+
+    it('verifyProof fails when proof is tampered', async () => {
+        await withSimulatedServer(async () => {
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+            });
+            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
+            const match = /consentify=([^;]+)/.exec(setHeader);
+            const cookieHeader = 'consentify=' + match![1];
+            const proof = await c.getProof(cookieHeader);
+            const tampered: ConsentProof<'analytics'> = { ...proof!, choices: { ...proof!.choices, analytics: false } };
+            expect(await verifyProof(tampered, 'dev-secret')).toBe(false);
+        });
+    });
+});
+
+describe('Cloud mode (Mode B)', () => {
+    let originalFetch: typeof fetch;
+
+    beforeEach(() => {
+        clearAllCookies();
+        localStorage.clear();
+        originalFetch = globalThis.fetch;
+        // Prevent cross-test pollution: instances from prior tests still hold
+        // references to the default BroadcastChannel and would receive our set()
+        // notifications otherwise.
+        vi.stubGlobal('BroadcastChannel', undefined);
+    });
+    afterEach(() => {
+        clearAllCookies();
+        localStorage.clear();
+        globalThis.fetch = originalFetch;
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    const stubConfigFetch = (
+        siteCfg: { categories: string[]; policyIdentifier: string; mode?: 'opt-in' | 'opt-out' },
+        latestHash = 'abc123',
+    ): ReturnType<typeof vi.fn> => {
+        const spy = vi.fn((url: string) => {
+            if (url.endsWith('/latest.json')) {
+                return Promise.resolve(new Response(JSON.stringify({ current: latestHash })));
+            }
+            if (url.endsWith(`/${latestHash}.json`)) {
+                return Promise.resolve(new Response(JSON.stringify(siteCfg)));
+            }
+            return Promise.resolve(new Response('ok'));
+        });
+        vi.stubGlobal('fetch', spy);
+        return spy;
+    };
+
+    it('returns a Promise when siteId is provided', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const promise = createConsentify({
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        });
+        expect(promise).toBeInstanceOf(Promise);
+        const c = await promise;
+        expect(c.policy.identifier).toBe('v1');
+        expect(spy.mock.calls[0][0]).toBe('https://cdn.test/config/site_abc/latest.json');
+        expect(spy.mock.calls[1][0]).toBe('https://cdn.test/config/site_abc/abc123.json');
+    });
+
+    it('uses categories from the fetched SiteConfig', async () => {
+        stubConfigFetch({ categories: ['analytics', 'marketing'], policyIdentifier: 'v2' });
+        const c = await createConsentify({
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        });
+        expect(c.policy.categories).toEqual(['analytics', 'marketing']);
+    });
+
+    it('local overrides take precedence over SiteConfig', async () => {
+        stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1', mode: 'opt-in' });
+        const c = await createConsentify({
+            siteId: 'site_abc',
+            mode: 'opt-out',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        });
+        expect(c.mode).toBe('opt-out');
+    });
+
+    it('throws ConsentifyConfigError on fetch failure', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+        await expect(createConsentify({
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        })).rejects.toThrow(ConsentifyConfigError);
+    });
+
+    it('throws ConsentifyConfigError when latest.json is malformed', async () => {
+        vi.stubGlobal('fetch', vi.fn((url: string) => {
+            if (url.endsWith('/latest.json')) {
+                return Promise.resolve(new Response(JSON.stringify({ wrong: 'shape' })));
+            }
+            return Promise.resolve(new Response('ok'));
+        }));
+        await expect(createConsentify({
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test' },
+        })).rejects.toThrow(ConsentifyConfigError);
+    });
+
+    it('POSTs events to the ingest endpoint on consent change', async () => {
+        vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createConsentify({
+            siteId: 'site_abc',
+            apiKey: 'sk_test',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => {
+            const ingestCall = spy.mock.calls.find(
+                ([url]) => typeof url === 'string' && url.includes('ingest.test'),
+            );
+            expect(ingestCall).toBeDefined();
+        });
+        const ingestCall = spy.mock.calls.find(
+            ([url]) => typeof url === 'string' && url.includes('ingest.test'),
+        )!;
+        expect(ingestCall[0]).toBe('https://ingest.test/v1/events');
+    });
+
+    it('writes failed send to consentify_event_buffer and drains on next success', async () => {
+        let failNext = true;
+        const cfg = { categories: ['analytics'], policyIdentifier: 'v1' };
+        const spy = vi.fn((url: string) => {
+            if (url.endsWith('/latest.json')) return Promise.resolve(new Response(JSON.stringify({ current: 'h1' })));
+            if (url.endsWith('/h1.json')) return Promise.resolve(new Response(JSON.stringify(cfg)));
+            if (url.includes('ingest.test')) {
+                if (failNext) {
+                    failNext = false;
+                    return Promise.resolve(new Response('err', { status: 500 }));
+                }
+                return Promise.resolve(new Response('ok'));
+            }
+            return Promise.resolve(new Response('ok'));
+        });
+        vi.stubGlobal('fetch', spy);
+        vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
+
+        const c = await createConsentify({
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => {
+            expect(localStorage.getItem('consentify_event_buffer')).not.toBeNull();
+        });
+
+        c.set({ analytics: false });
+        await vi.waitFor(() => {
+            expect(localStorage.getItem('consentify_event_buffer')).toBeNull();
+        });
     });
 });

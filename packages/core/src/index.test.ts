@@ -1720,6 +1720,13 @@ function withSimulatedServer<T>(fn: () => T | Promise<T>): Promise<T> {
     }
 }
 
+// Round-trip helper: server.set() produces a Set-Cookie header; server.get()
+// wants a Cookie header. Extract the value and repack.
+function setHeaderToCookieHeader(setHeader: string): string {
+    const match = /consentify=([^;]+)/.exec(setHeader);
+    return 'consentify=' + match![1];
+}
+
 describe('HMAC-SHA256 proof', () => {
     beforeEach(() => { clearAllCookies(); });
     afterEach(() => { clearAllCookies(); vi.restoreAllMocks(); });
@@ -1739,9 +1746,9 @@ describe('HMAC-SHA256 proof', () => {
                 policy: { categories: ['analytics'] as const },
                 secret: 'dev-secret',
             });
-            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
-            const match = /consentify=([^;]+)/.exec(setHeader);
-            const cookieHeader = 'consentify=' + match![1];
+            const cookieHeader = setHeaderToCookieHeader(
+                c.set({ analytics: true }, 'consentify=' + enc({})),
+            );
             const proofPromise = c.getProof(cookieHeader);
             expect(proofPromise).toBeInstanceOf(Promise);
             const proof = await proofPromise;
@@ -1757,9 +1764,9 @@ describe('HMAC-SHA256 proof', () => {
                 policy: { categories: ['analytics'] as const },
                 secret: 'dev-secret',
             });
-            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
-            const match = /consentify=([^;]+)/.exec(setHeader);
-            const cookieHeader = 'consentify=' + match![1];
+            const cookieHeader = setHeaderToCookieHeader(
+                c.set({ analytics: true }, 'consentify=' + enc({})),
+            );
             const proof = await c.getProof(cookieHeader);
             expect(await verifyProof(proof!, 'dev-secret')).toBe(true);
         });
@@ -1771,9 +1778,9 @@ describe('HMAC-SHA256 proof', () => {
                 policy: { categories: ['analytics'] as const },
                 secret: 'dev-secret',
             });
-            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
-            const match = /consentify=([^;]+)/.exec(setHeader);
-            const cookieHeader = 'consentify=' + match![1];
+            const cookieHeader = setHeaderToCookieHeader(
+                c.set({ analytics: true }, 'consentify=' + enc({})),
+            );
             const proof = await c.getProof(cookieHeader);
             expect(await verifyProof(proof!, 'wrong-secret')).toBe(false);
         });
@@ -1785,9 +1792,9 @@ describe('HMAC-SHA256 proof', () => {
                 policy: { categories: ['analytics'] as const },
                 secret: 'dev-secret',
             });
-            const setHeader = c.set({ analytics: true }, 'consentify=' + enc({}));
-            const match = /consentify=([^;]+)/.exec(setHeader);
-            const cookieHeader = 'consentify=' + match![1];
+            const cookieHeader = setHeaderToCookieHeader(
+                c.set({ analytics: true }, 'consentify=' + enc({})),
+            );
             const proof = await c.getProof(cookieHeader);
             const tampered: ConsentProof<'analytics'> = { ...proof!, choices: { ...proof!.choices, analytics: false } };
             expect(await verifyProof(tampered, 'dev-secret')).toBe(false);

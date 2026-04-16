@@ -445,17 +445,16 @@ function deriveCloudAction<T extends UserCategory>(
 
 interface BufferedEvent { url: string; body: string; apiKey?: string }
 
-// One localStorage helper for the retry buffer. `value === null` means clear.
-function stashEvent(value: BufferedEvent | null): BufferedEvent | null {
+function readPendingEvent(): BufferedEvent | null {
     if (!canLocalStorage()) return null;
     try {
-        if (value === null) {
-            const raw = window.localStorage.getItem(EVENT_BUFFER_KEY);
-            return raw ? JSON.parse(raw) as BufferedEvent : null;
-        }
-        window.localStorage.setItem(EVENT_BUFFER_KEY, JSON.stringify(value));
-    } catch { /* ignore */ }
-    return null;
+        const raw = window.localStorage.getItem(EVENT_BUFFER_KEY);
+        return raw ? JSON.parse(raw) as BufferedEvent : null;
+    } catch { return null; }
+}
+function savePendingEvent(evt: BufferedEvent): void {
+    if (!canLocalStorage()) return;
+    try { window.localStorage.setItem(EVENT_BUFFER_KEY, JSON.stringify(evt)); } catch { /* ignore */ }
 }
 const dropEvent = () => { if (canLocalStorage()) try { window.localStorage.removeItem(EVENT_BUFFER_KEY); } catch {} };
 
@@ -486,7 +485,7 @@ function startCloudReporting<Cs extends readonly string[]>(
 
     // Flush any pending event left over from a previous session. Whether the
     // retry succeeds or fails, drop it - no infinite re-queue.
-    const pending = stashEvent(null);
+    const pending = readPendingEvent();
     if (pending) void postCloudEvent(pending).finally(dropEvent);
 
     const visitorHash = canLocalStorage() ? readOrCreateStoredVisitorId() : generateVisitorId();
@@ -508,7 +507,7 @@ function startCloudReporting<Cs extends readonly string[]>(
         const evt: BufferedEvent = { url, body, apiKey: opts.apiKey };
         void (async () => {
             const ok = await postCloudEvent(evt);
-            if (ok) dropEvent(); else stashEvent(evt);
+            if (ok) dropEvent(); else savePendingEvent(evt);
         })();
     };
 

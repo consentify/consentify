@@ -1,5 +1,5 @@
-import type { ConsentMode, ConsentState, ConsentifyConfigError, UserCategory } from './types';
-import { ConsentifyConfigError as ConfigError } from './types';
+import type { ConsentMode, ConsentState, UserCategory } from './types';
+import { ConsentifyConfigError } from './types';
 import { TAG, canLocalStorage, isBrowser, logW } from './util';
 import { generateVisitorId, readOrCreateStoredVisitorId } from './visitor';
 
@@ -18,11 +18,10 @@ export type CloudAction = 'accept_all' | 'reject_all' | 'customize';
 
 export function deriveCloudAction<T extends UserCategory>(
     state: ConsentState<T>,
-    categories: readonly string[],
+    userCats: readonly string[],
 ): CloudAction {
     if (state.decision !== 'decided') return 'customize';
     const choices = state.snapshot.choices as Record<string, boolean>;
-    const userCats = categories.filter(c => c !== 'necessary');
     if (userCats.every(c => choices[c] === true)) return 'accept_all';
     if (userCats.every(c => !choices[c])) return 'reject_all';
     return 'customize';
@@ -83,10 +82,10 @@ export function startCloudReporting<T extends UserCategory>(
 ): () => void {
     if (!isBrowser()) return () => {};
     const url = `${opts.ingestEndpoint.replace(/\/$/, '')}/v1/events`;
-    const categories = instance.policy.categories;
-    // `lastKey` dedups consecutive events with identical snapshots. Choices are
-    // serialized after going through `normalize()`, which iterates
-    // `policy.categories` in declaration order, so key order is deterministic.
+    const userCats = instance.policy.categories.filter(c => c !== 'necessary');
+    // Dedup consecutive events by `policy + givenAt`; `givenAt` is a fresh ISO
+    // timestamp on every real write, so identical snapshots (e.g. cross-tab
+    // echoes) share a key and are suppressed.
     let lastKey = '';
 
     // Flush any pending event left over from a previous session. Whether the
@@ -98,16 +97,15 @@ export function startCloudReporting<T extends UserCategory>(
 
     const send = (state: ConsentState<T>): void => {
         if (state.decision !== 'decided') return;
-        const choices = state.snapshot.choices as Record<string, boolean>;
-        const key = state.snapshot.policy + ':' + JSON.stringify(choices);
+        const key = state.snapshot.policy + '|' + state.snapshot.givenAt;
         if (key === lastKey) return;
         lastKey = key;
         // Payload key is `visitorHash` to match the ingest-endpoint contract;
         // the SDK config calls it `visitorId` everywhere else.
         const body = JSON.stringify({
             siteId: opts.siteId,
-            action: deriveCloudAction(state, categories),
-            categories: choices,
+            action: deriveCloudAction(state, userCats),
+            categories: state.snapshot.choices,
             visitorHash,
             policyVersion: state.snapshot.policy,
             ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
@@ -123,9 +121,6 @@ export function startCloudReporting<T extends UserCategory>(
     if (current.decision === 'decided') send(current);
     return instance.subscribe(() => { send(instance.get()); });
 }
-
-// Local re-use of the type name so consumers can still catch `ConsentifyConfigError`.
-export type { ConsentifyConfigError };
 
 export async function fetchSiteConfig(
     siteId: string,
@@ -156,7 +151,7 @@ export async function fetchSiteConfig(
             consentMaxAgeDays: cfg.consentMaxAgeDays,
         };
     } catch (cause) {
-        throw new ConfigError(
+        throw new ConsentifyConfigError(
             TAG + `Failed to fetch SiteConfig for "${siteId}"`,
             { cause },
         );

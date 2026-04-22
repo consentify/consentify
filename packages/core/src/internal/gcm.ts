@@ -58,7 +58,7 @@ export function enableConsentMode<T extends string>(
     const state = instance.get();
     const result: Record<string, GoogleConsentValue> = {};
 
-    for (const [category, gTypes] of Object.entries(options.mapping) as [string, GoogleConsentType[]][]) {
+    for (const [category, gTypes] of Object.entries(options.mapping)) {
       if (!gTypes) continue;
 
       let granted = false;
@@ -78,23 +78,19 @@ export function enableConsentMode<T extends string>(
     return result;
   };
 
-  const defaultPayload: Record<string, unknown> = { ...resolve() };
-  if (options.waitForUpdate != null) {
-    defaultPayload.wait_for_update = options.waitForUpdate;
-  }
+  const initial = resolve();
+  const defaultPayload: Record<string, unknown> = options.waitForUpdate != null
+    ? { ...initial, wait_for_update: options.waitForUpdate }
+    : initial;
   safeGtag('consent', 'default', defaultPayload);
 
-  const state = instance.get();
-  if (state.decision === 'decided') {
-    safeGtag('consent', 'update', resolve());
+  if (instance.get().decision === 'decided') {
+    safeGtag('consent', 'update', initial);
   }
 
-  const unsubscribe = instance.subscribe(() => {
-    const current = instance.get();
-    if (current.decision === 'decided') {
+  return instance.subscribe(() => {
+    if (instance.get().decision === 'decided') {
       safeGtag('consent', 'update', resolve());
     }
   });
-
-  return unsubscribe;
 }

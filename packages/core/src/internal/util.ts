@@ -17,8 +17,13 @@ export const toISO = (): string => new Date().toISOString();
 export const isBrowser = (): boolean =>
     typeof window !== 'undefined' && typeof document !== 'undefined';
 
+// Memoized: `window.localStorage` may throw once in sandboxed iframes, but the
+// result is stable for a page lifetime. Callers use this on every storage op.
+let localStorageProbe: boolean | undefined;
 export const canLocalStorage = (): boolean => {
-    try { return isBrowser() && !!window.localStorage; } catch { return false; }
+    if (localStorageProbe !== undefined) return localStorageProbe;
+    try { localStorageProbe = isBrowser() && !!window.localStorage; } catch { localStorageProbe = false; }
+    return localStorageProbe;
 };
 
 export const toHex = (buf: ArrayBuffer): string =>
@@ -52,13 +57,14 @@ export function hashPolicy(categories: readonly string[], identifier?: string): 
 export function isValidSnapshot<T extends UserCategory>(s: unknown): s is Snapshot<T> {
     if (
         typeof s !== 'object' || s === null ||
-        typeof (s as any).policy !== 'string' || (s as any).policy === '' ||
-        typeof (s as any).givenAt !== 'string' ||
-        typeof (s as any).choices !== 'object' || (s as any).choices === null
+        typeof (s as { policy?: unknown }).policy !== 'string' || (s as { policy: string }).policy === '' ||
+        typeof (s as { givenAt?: unknown }).givenAt !== 'string' ||
+        typeof (s as { choices?: unknown }).choices !== 'object' || (s as { choices: unknown }).choices === null
     ) return false;
-    if (isNaN(new Date((s as any).givenAt).getTime())) return false;
-    for (const v of Object.values((s as any).choices)) {
-        if (typeof v !== 'boolean') return false;
+    if (isNaN(Date.parse((s as { givenAt: string }).givenAt))) return false;
+    const choices = (s as { choices: Record<string, unknown> }).choices;
+    for (const k in choices) {
+        if (typeof choices[k] !== 'boolean') return false;
     }
     return true;
 }

@@ -29,7 +29,7 @@ import {
     writeCookie,
     type CookieOpt,
 } from './internal/cookie';
-import { hmacSign } from './internal/crypto';
+import { buildProofFnv1a, buildProofHmac } from './internal/crypto';
 import { resolveVisitorId } from './internal/visitor';
 import {
     DEFAULT_CONFIG_ENDPOINT,
@@ -43,13 +43,11 @@ import {
     canLocalStorage,
     dec,
     enc,
-    fnv1a,
     hashPolicy,
     isBrowser,
     isValidSnapshot,
     logE,
     logW,
-    stableStringify,
     toISO,
 } from './internal/util';
 
@@ -391,19 +389,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         return c;
     };
 
-    const hasSecret = typeof init.secret === 'string' && init.secret.length > 0;
     const secret = init.secret ?? '';
-
-    const buildProofSync = (snapshot: Snapshot<T>): ConsentProof<T> => {
-        const body = { policy: snapshot.policy, givenAt: snapshot.givenAt, choices: snapshot.choices };
-        return { ...body, signature: fnv1a(stableStringify(body)) };
-    };
-
-    const buildProofAsync = async (snapshot: Snapshot<T>): Promise<ConsentProof<T>> => {
-        const body = { policy: snapshot.policy, givenAt: snapshot.givenAt, choices: snapshot.choices };
-        const signature = await hmacSign(secret, stableStringify(body));
-        return { ...body, signature };
-    };
 
     // --- client-side storage helpers ---
     const readFromStore = (kind: StorageKind): string | null => {
@@ -456,9 +442,13 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         return s;
     };
 
-    const writeClientIfChanged = (next: Snapshot<T>): boolean => {
-        const prev = readClient();
-        const same = !!(prev && prev.policy === next.policy && JSON.stringify(prev.choices) === JSON.stringify(next.choices));
+    // `prev` is passed in instead of re-read — the caller has already decoded
+    // it once on the write path, and `readClient()` is non-trivial
+    // (decodeURIComponent + JSON.parse + isValidSnapshot). `prev.policy` is
+    // guaranteed to equal `next.policy` (both equal `policyHash`), so only
+    // compare choices.
+    const writeClientIfChanged = (prev: Snapshot<T> | null, next: Snapshot<T>): boolean => {
+        const same = !!(prev && JSON.stringify(prev.choices) === JSON.stringify(next.choices));
         if (!same) writeClientRaw(enc(next));
         return !same;
     };
@@ -496,11 +486,13 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
 
     const syncState = (): void => {
         const s = readClient();
-        if (!s) {
-            cachedState = unsetState;
-        } else {
-            cachedState = { decision: 'decided', snapshot: s };
-        }
+        cachedState = s ? { decision: 'decided', snapshot: s } : unsetState;
+    };
+
+    // Fast path used by `client.set`: we already have the persisted snapshot
+    // in hand, no need to re-read from storage.
+    const setCachedSnapshot = (snapshot: Snapshot<T>): void => {
+        cachedState = { decision: 'decided', snapshot };
     };
 
     const notifyListeners = (): void => {
@@ -529,9 +521,10 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     function on<K extends keyof ConsentEventMap<T>>(
         type: K, handler: ConsentEventHandler<T, K>,
     ): () => void {
-        if (!eventHandlers.has(type)) eventHandlers.set(type, new Set());
-        eventHandlers.get(type)!.add(handler);
-        return () => eventHandlers.get(type)!.delete(handler);
+        let set = eventHandlers.get(type);
+        if (!set) { set = new Set(); eventHandlers.set(type, set); }
+        set.add(handler);
+        return () => { set.delete(handler); };
     }
 
     function once<K extends keyof ConsentEventMap<T>>(
@@ -595,9 +588,9 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         void (async () => {
             try {
                 const visitorId = await getVisitorId();
-                const proof = hasSecret
-                    ? await buildProofAsync(snapshot)
-                    : buildProofSync(snapshot);
+                const proof = secret
+                    ? await buildProofHmac(snapshot, secret)
+                    : buildProofFnv1a(snapshot);
                 await adapter.save({ visitorId, snapshot, proof });
             } catch (err) {
                 logW('adapter.save failed:', err);
@@ -651,9 +644,8 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
                 givenAt: toISO(),
                 choices: normalize({ ...base, ...choices }),
             };
-            const changed = writeClientIfChanged(next);
-            if (changed) {
-                syncState();
+            if (writeClientIfChanged(fresh, next)) {
+                setCachedSnapshot(next);
                 notifyListeners();
                 emit('change', { from, to: cachedState, timestamp: Date.now() });
                 checkExpiring();
@@ -687,7 +679,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
             onRevoke?: () => void,
         ): (() => void) => {
             let phase: 'waiting' | 'granted' | 'done' = 'waiting';
-            const check = () => clientGet(category as Necessary | T) === true;
+            const check = () => clientGet(category) === true;
 
             const tick = () => {
                 if (phase === 'waiting' && check()) {
@@ -749,12 +741,12 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     let unsignedProofWarned = false;
     function flatGetProof(cookieHeader?: string): ProofResult | Promise<ProofResult> {
         const state = typeof cookieHeader === 'string' ? server.get(cookieHeader) : cachedState;
-        if (state.decision !== 'decided') return hasSecret ? Promise.resolve(null) : null;
-        if (!hasSecret && !unsignedProofWarned) {
+        if (state.decision !== 'decided') return secret ? Promise.resolve(null) : null;
+        if (!secret && !unsignedProofWarned) {
             unsignedProofWarned = true;
             logW('getProof uses FNV1a fallback; pass `secret` for HMAC-SHA256');
         }
-        return hasSecret ? buildProofAsync(state.snapshot) : buildProofSync(state.snapshot);
+        return secret ? buildProofHmac(state.snapshot, secret) : buildProofFnv1a(state.snapshot);
     }
 
     const instance = {
@@ -767,9 +759,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         client,
 
         get: flatGet,
-        isGranted: (category: Necessary | T): boolean => {
-            return clientGet(category as Necessary | T);
-        },
+        isGranted: (category: Necessary | T): boolean => clientGet(category),
         set: flatSet,
         clear: flatClear,
         acceptAll: flatAcceptAll,

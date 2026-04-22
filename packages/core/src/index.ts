@@ -339,9 +339,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
 ): ConsentifyInstance<Cs> | ConsentifyAsyncInstance<Cs> {
     type T = ArrToUnion<Cs>;
     if (init.secret && isBrowser()) {
-        throw new ConsentifyConfigError(
-            TAG + '`secret` is server-only: do not ship HMAC secrets to the browser',
-        );
+        throw new ConsentifyConfigError(TAG + '`secret` is server-only');
     }
     const policyHash = init.policy.identifier ?? hashPolicy(init.policy.categories);
     const cookieName = init.cookie?.name ?? DEFAULT_COOKIE;
@@ -358,15 +356,13 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     const mode: ConsentMode = init.mode ?? 'opt-in';
     const expirationWarningDays = init.expirationWarningDays ?? 30;
     if (consentMaxAgeDays && expirationWarningDays >= consentMaxAgeDays) {
-        logW('expirationWarningDays should be less than consentMaxAgeDays');
+        logW('expirationWarningDays >= consentMaxAgeDays');
     }
 
     const isExpired = (givenAt: string): boolean => {
         if (!consentMaxAgeDays) return false;
-        const givenTime = new Date(givenAt).getTime();
-        if (isNaN(givenTime)) return true;
-        const maxAgeMs = consentMaxAgeDays * MS_PER_DAY;
-        return Date.now() - givenTime > maxAgeMs;
+        const givenTime = Date.parse(givenAt);
+        return isNaN(givenTime) || Date.now() - givenTime > consentMaxAgeDays * MS_PER_DAY;
     };
 
     const allowed = new Set<Necessary | T>(['necessary', ...(init.policy.categories as unknown as T[])]);
@@ -392,53 +388,46 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     const secret = init.secret ?? '';
 
     // --- client-side storage helpers ---
-    const readFromStore = (kind: StorageKind): string | null => {
-        switch (kind) {
-            case 'cookie': return readCookie(cookieName);
-            case 'localStorage': try { return canLocalStorage() ? window.localStorage.getItem(cookieName) : null; } catch (err) { logW('localStorage read failed:', err); return null; }
-            default: return null;
-        }
-    };
-    const writeToStore = (kind: StorageKind, value: string) => {
-        switch (kind) {
-            case 'cookie': writeCookie(cookieName, value, cookieCfg); break;
-            case 'localStorage': try { if (canLocalStorage()) window.localStorage.setItem(cookieName, value); } catch (err) { logW('localStorage write failed:', err); } break;
-        }
-    };
-    const clearCookieHeader = () => buildSetCookieHeader(cookieName, '', { ...cookieCfg, maxAgeSec: 0 });
-    const clearStore = (kind: StorageKind) => {
-        switch (kind) {
-            case 'cookie': if (isBrowser()) document.cookie = clearCookieHeader(); break;
-            case 'localStorage': try { if (canLocalStorage()) window.localStorage.removeItem(cookieName); } catch (err) { logW('localStorage clear failed:', err); } break;
-        }
-    };
-    const firstAvailableStore = (): StorageKind => {
-        for (const k of storageOrder) {
-            if (k === 'cookie') return 'cookie';
-            if (k === 'localStorage' && canLocalStorage()) return 'localStorage';
-        }
-        return 'cookie';
-    };
-    const readClientRaw = (): string | null => {
-        for (const k of storageOrder) {
-            const v = readFromStore(k);
-            if (v) return v;
-        }
+    // Unified localStorage dispatcher: op is 'r'ead / 'w'rite / 'c'lear.
+    // Collapses three try/catch blocks and three log messages into one.
+    const ls = (op: 'r' | 'w' | 'c', value?: string): string | null => {
+        if (!canLocalStorage()) return null;
+        try {
+            const s = window.localStorage;
+            if (op === 'r') return s.getItem(cookieName);
+            if (op === 'w') s.setItem(cookieName, value!);
+            else s.removeItem(cookieName);
+        } catch (err) { logW('localStorage failed:', err); }
         return null;
     };
-    const writeClientRaw = (value: string) => {
-        const primary = firstAvailableStore();
+    const readFromStore = (kind: StorageKind): string | null =>
+        kind === 'cookie' ? readCookie(cookieName) : kind === 'localStorage' ? ls('r') : null;
+    const writeToStore = (kind: StorageKind, value: string): void => {
+        if (kind === 'cookie') writeCookie(cookieName, value, cookieCfg);
+        else if (kind === 'localStorage') ls('w', value);
+    };
+    const clearStore = (kind: StorageKind): void => {
+        if (kind === 'cookie') { if (isBrowser()) document.cookie = buildSetCookieHeader(cookieName, '', { ...cookieCfg, maxAgeSec: 0 }); }
+        else if (kind === 'localStorage') ls('c');
+    };
+    const writeClientRaw = (value: string): void => {
+        let primary: StorageKind = 'cookie';
+        for (const k of storageOrder) {
+            if (k === 'cookie' || (k === 'localStorage' && canLocalStorage())) { primary = k; break; }
+        }
         writeToStore(primary, value);
         if (primary !== 'cookie' && storageOrder.includes('cookie')) writeToStore('cookie', value);
     };
 
     // --- read helpers ---
     const readClient = (): Snapshot<T> | null => {
-        const raw = readClientRaw();
+        let raw: string | null = null;
+        for (const k of storageOrder) {
+            raw = readFromStore(k);
+            if (raw) break;
+        }
         const s = raw ? dec<Snapshot<T>>(raw) : null;
-        if (!s || !isValidSnapshot<T>(s)) return null;
-        if (s.policy !== policyHash) return null;
-        if (isExpired(s.givenAt)) return null;
+        if (!s || !isValidSnapshot<T>(s) || s.policy !== policyHash || isExpired(s.givenAt)) return null;
         return s;
     };
 
@@ -458,9 +447,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         get: (cookieHeader: string | null | undefined): ConsentState<T> => {
             const raw = cookieHeader ? readCookie(cookieName, cookieHeader) : null;
             const s = raw ? dec<Snapshot<T>>(raw) : null;
-            if (!s || !isValidSnapshot<T>(s)) return { decision: 'unset' };
-            if (s.policy !== policyHash) return { decision: 'unset' };
-            if (isExpired(s.givenAt)) return { decision: 'unset' };
+            if (!s || !isValidSnapshot<T>(s) || s.policy !== policyHash || isExpired(s.givenAt)) return { decision: 'unset' };
             return { decision: 'decided', snapshot: s };
         },
         set: (
@@ -476,7 +463,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
             };
             return buildSetCookieHeader(cookieName, enc(snapshot), cookieCfg);
         },
-        clear: (): string => clearCookieHeader()
+        clear: (): string => buildSetCookieHeader(cookieName, '', { ...cookieCfg, maxAgeSec: 0 })
     };
 
     // ========== Subscribe pattern for React ==========
@@ -538,14 +525,12 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     let expiringEmittedForGivenAt = '';
 
     const checkExpiring = (): void => {
-        if (!consentMaxAgeDays) return;
-        if (cachedState.decision !== 'decided') return;
+        if (!consentMaxAgeDays || cachedState.decision !== 'decided') return;
         const { givenAt } = cachedState.snapshot;
         if (givenAt === expiringEmittedForGivenAt) return;
-        const givenMs = new Date(givenAt).getTime();
-        if (isNaN(givenMs)) { logW('Invalid consent timestamp:', givenAt); return; }
-        const expiresMs = givenMs + consentMaxAgeDays * MS_PER_DAY;
-        const daysRemaining = (expiresMs - Date.now()) / (MS_PER_DAY);
+        // `givenAt` is validated upstream (isValidSnapshot uses Date.parse).
+        const expiresMs = Date.parse(givenAt) + consentMaxAgeDays * MS_PER_DAY;
+        const daysRemaining = (expiresMs - Date.now()) / MS_PER_DAY;
         if (daysRemaining > 0 && daysRemaining <= expirationWarningDays) {
             expiringEmittedForGivenAt = givenAt;
             emit('expiring', { expiresAt: expiresMs, daysRemaining, timestamp: Date.now() });
@@ -562,7 +547,9 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     let bc: BroadcastChannel | null = null;
     if (isBrowser() && typeof BroadcastChannel !== 'undefined') {
         bc = new BroadcastChannel(`consentify:${cookieName}`);
-        bc.onmessage = () => { try { syncState(); notifyListeners(); checkExpiring(); } catch (err) { logE('BroadcastChannel sync failed:', err); } };
+        // Per-listener errors are already caught inside `notifyListeners`; other
+        // helpers here (`syncState`, `checkExpiring`) only read validated state.
+        bc.onmessage = () => { syncState(); notifyListeners(); checkExpiring(); };
     }
     // ======================================================
 

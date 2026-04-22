@@ -42,7 +42,7 @@ export function savePendingEvent(evt: BufferedEvent): void {
     try {
         window.localStorage.setItem(EVENT_BUFFER_KEY, JSON.stringify(evt));
     } catch (err) {
-        logW('Could not persist pending cloud event:', err);
+        logW('persist cloud evt:', err);
     }
 }
 

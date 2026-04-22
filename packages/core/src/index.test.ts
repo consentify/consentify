@@ -104,6 +104,10 @@ describe('readCookie (via server.get)', () => {
         const state = c.server.get(header);
         expect(state.decision).toBe('decided');
     });
+    it('returns unset when the consentify cookie is absent among others', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] } });
+        expect(c.server.get('other=foo; another=bar').decision).toBe('unset');
+    });
 });
 
 describe('writeCookie (via client)', () => {
@@ -1758,6 +1762,24 @@ describe('ConsentAdapter integration', () => {
         c.set({ analytics: false });
         await vi.waitFor(() => expect(adapter._saved.length).toBe(2));
         expect(adapter._saved[1].visitorId).toBe('visitor-2');
+    });
+
+    it('keeps visitorId empty when the factory rejects every call', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const adapter = makeAdapter();
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: () => Promise.reject(new Error('always broken')),
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(2));
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(3));
+        for (const saved of adapter._saved) expect(saved.visitorId).toBe('');
+        expect(warn).toHaveBeenCalled();
     });
 });
 

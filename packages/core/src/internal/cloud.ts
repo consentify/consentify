@@ -47,7 +47,12 @@ export function savePendingEvent(evt: BufferedEvent): void {
 }
 
 export const dropEvent = (): void => {
-    if (canLocalStorage()) try { window.localStorage.removeItem(EVENT_BUFFER_KEY); } catch {}
+    if (!canLocalStorage()) return;
+    try {
+        window.localStorage.removeItem(EVENT_BUFFER_KEY);
+    } catch (err) {
+        logW('drop pending cloud evt:', err);
+    }
 };
 
 // fetch with keepalive survives page unload on modern browsers, so a separate

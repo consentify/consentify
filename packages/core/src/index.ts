@@ -368,21 +368,21 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     const allowed = new Set<Necessary | T>(['necessary', ...(init.policy.categories as unknown as T[])]);
 
     const normalize = (choices?: Partial<Choices<T>>): Choices<T> => {
-        const base = { necessary: true } as Choices<T>;
-        for (const c of init.policy.categories as unknown as T[]) (base as any)[c] = false;
+        const base: Record<string, boolean> = {};
+        for (const c of init.policy.categories) base[c] = false;
         if (choices) {
-            for (const [k,v] of Object.entries(choices) as [keyof Choices<T>, boolean][]) {
-                if (allowed.has(k as any)) (base as any)[k] = !!v;
+            for (const k in choices) {
+                if (allowed.has(k as Necessary | T)) base[k] = !!choices[k as keyof Choices<T>];
             }
         }
-        (base as any).necessary = true;
-        return base;
+        base.necessary = true;
+        return base as Choices<T>;
     };
 
     const allChoices = (grant: boolean): Partial<Choices<T>> => {
-        const c: any = {};
-        for (const cat of init.policy.categories as unknown as T[]) c[cat] = grant;
-        return c;
+        const c: Record<string, boolean> = {};
+        for (const cat of init.policy.categories) c[cat] = grant;
+        return c as Partial<Choices<T>>;
     };
 
     const secret = init.secret ?? '';

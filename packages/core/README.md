@@ -46,7 +46,7 @@ const consent = createConsentify({
 consent.client.set({ analytics: true, marketing: false });
 
 // Check consent
-if (consent.client.get('analytics')) {
+if (consent.isGranted('analytics')) {
   loadAnalytics();
 }
 
@@ -79,20 +79,8 @@ function CookieBanner() {
   return (
     <div className="cookie-banner">
       <p>We use cookies to enhance your experience.</p>
-      <button onClick={() => consent.client.set({
-        analytics: true,
-        marketing: true,
-        preferences: true
-      })}>
-        Accept All
-      </button>
-      <button onClick={() => consent.client.set({
-        analytics: false,
-        marketing: false,
-        preferences: false
-      })}>
-        Essential Only
-      </button>
+      <button onClick={() => consent.acceptAll()}>Accept All</button>
+      <button onClick={() => consent.rejectAll()}>Essential Only</button>
     </div>
   );
 }
@@ -189,9 +177,9 @@ const consent = createConsentify({
 });
 
 // TypeScript knows your categories!
-consent.client.set({ analytics: true, ads: false });
-consent.client.get('personalization'); // ✓ valid
-consent.client.get('unknown');         // ✗ type error
+consent.set({ analytics: true, ads: false });
+consent.isGranted('personalization'); // ✓ valid
+consent.isGranted('unknown');         // ✗ type error
 ```
 
 ## Configuration
@@ -301,13 +289,24 @@ ccpa.isGranted('analytics'); // true (until user opts out)
 consent.set({ analytics: true, marketing: false });
 
 const proof = consent.getProof();
-// { policy: '...', givenAt: '2026-...', choices: {...}, signature: 'a1b2c3d4' }
+// { policy: '...', givenAt: '2026-...', choices: {...}, signature: '...' }
 
 // Server-side
 const proof = consent.getProof(cookieHeader);
 ```
 
-The `signature` is an FNV1a hash of the proof body for tamper evidence.
+**Signed vs unsigned.** Pass a `secret` to enable tamper-evident HMAC-SHA256 signatures (recommended for any compliance use case). In signed mode, `getProof()` returns `Promise<ConsentProof<T> | null>`.
+
+```ts
+const consent = createConsentify({
+  policy: { categories: ['analytics'] as const },
+  secret: process.env.CONSENT_SIGNING_SECRET,
+});
+
+const proof = await consent.getProof();
+```
+
+Without a `secret`, `getProof()` falls back to a non-cryptographic FNV1a hash. This path is **forgeable**, emits a one-time `console.warn`, and is slated to return `null` in a future major release. Only use it for local debugging.
 
 ### Expiration Warning
 
@@ -323,6 +322,45 @@ consent.on('expiring', (event) => {
   // Show re-consent prompt
 });
 ```
+
+## Script Tag / IIFE
+
+For non-bundled apps (WordPress, static sites), load the IIFE build directly:
+
+```html
+<script src="https://unpkg.com/@consentify/core/dist/consentify.iife.min.js"></script>
+<script>
+  var consent = Consentify.createConsentify({
+    policy: { categories: ['analytics', 'marketing'] }
+  });
+
+  consent.guard('analytics', function () {
+    // Load analytics script
+  });
+</script>
+```
+
+The IIFE bundle is ~5kb gzipped and exposes all exports on the `Consentify` global.
+
+### CSP nonce + SRI (recommended)
+
+If your site enforces a strict Content Security Policy, pin a Subresource Integrity hash and forward a nonce from your server template:
+
+```html
+<script
+  src="https://unpkg.com/@consentify/core@2/dist/consentify.iife.min.js"
+  integrity="sha384-REPLACE_WITH_SRI_HASH"
+  crossorigin="anonymous"
+  nonce="%%CSP_NONCE%%"></script>
+```
+
+Pair this with a CSP header like `script-src 'self' 'nonce-%%CSP_NONCE%%'`. Regenerate the SRI hash per pinned version:
+
+```bash
+openssl dgst -sha384 -binary dist/consentify.iife.min.js | openssl base64 -A
+```
+
+See [MDN: Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) for the full spec.
 
 ## How It Works
 

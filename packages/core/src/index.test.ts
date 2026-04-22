@@ -104,6 +104,10 @@ describe('readCookie (via server.get)', () => {
         const state = c.server.get(header);
         expect(state.decision).toBe('decided');
     });
+    it('returns unset when the consentify cookie is absent among others', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] } });
+        expect(c.server.get('other=foo; another=bar').decision).toBe('unset');
+    });
 });
 
 describe('writeCookie (via client)', () => {
@@ -1737,6 +1741,46 @@ describe('ConsentAdapter integration', () => {
         expect(adapter._saved[0].visitorId.length).toBeGreaterThan(0);
         expect(localStorage.getItem('consentify_visitor')).toBe(adapter._saved[0].visitorId);
     });
+
+    it('recovers when a user visitorId factory rejects on first call', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const adapter = makeAdapter();
+        let call = 0;
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: () => {
+                call++;
+                if (call === 1) return Promise.reject(new Error('boom'));
+                return Promise.resolve('visitor-2');
+            },
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        expect(adapter._saved[0].visitorId).toBe('');
+        expect(warn).toHaveBeenCalled();
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(2));
+        expect(adapter._saved[1].visitorId).toBe('visitor-2');
+    });
+
+    it('keeps visitorId empty when the factory rejects every call', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const adapter = makeAdapter();
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: () => Promise.reject(new Error('always broken')),
+        });
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(2));
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(3));
+        for (const saved of adapter._saved) expect(saved.visitorId).toBe('');
+        expect(warn).toHaveBeenCalled();
+    });
 });
 
 function withSimulatedServer<T>(fn: () => T | Promise<T>): Promise<T> {
@@ -1773,6 +1817,48 @@ describe('HMAC-SHA256 proof', () => {
                 secret: 'dev-secret',
             });
         }).toThrow(ConsentifyConfigError);
+    });
+
+    it('warns once when getProof() is called without a secret', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.set({ analytics: true });
+        c.getProof();
+        c.getProof();
+        c.getProof();
+        const unsignedWarnings = warn.mock.calls.filter(
+            args => typeof args[0] === 'string' && args[0].includes('FNV1a fallback'),
+        );
+        expect(unsignedWarnings.length).toBe(1);
+    });
+
+    it('does not warn when getProof() returns null (no decision)', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const proof = c.getProof();
+        expect(proof).toBeNull();
+        const unsignedWarnings = warn.mock.calls.filter(
+            args => typeof args[0] === 'string' && args[0].includes('FNV1a fallback'),
+        );
+        expect(unsignedWarnings.length).toBe(0);
+    });
+
+    it('does not warn when secret is provided (server)', async () => {
+        await withSimulatedServer(async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+            });
+            const cookieHeader = setHeaderToCookieHeader(
+                c.set({ analytics: true }, 'consentify=' + enc({})),
+            );
+            await c.getProof(cookieHeader);
+            const unsignedWarnings = warn.mock.calls.filter(
+                args => typeof args[0] === 'string' && args[0].includes('FNV1a fallback'),
+            );
+            expect(unsignedWarnings.length).toBe(0);
+        });
     });
 
     it('getProof returns a Promise<ConsentProof> when secret is set (server)', async () => {

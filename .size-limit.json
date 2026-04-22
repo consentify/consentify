@@ -6,7 +6,7 @@
   },
   {
     "path": "packages/core/dist/consentify.iife.min.js",
-    "limit": "5.5 kb",
+    "limit": "5.2 kb",
     "gzip": true
   }
 ]

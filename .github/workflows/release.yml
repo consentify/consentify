@@ -21,9 +21,10 @@ jobs:
         run: git merge-base --is-ancestor ${{ github.sha }} origin/main
       # No registry-url here: setup-node would write an _authToken line into
       # .npmrc, and even an empty NODE_AUTH_TOKEN overrides the OIDC flow.
+      # Node 24 bundles npm >= 11.5.1, required for trusted publishing.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - uses: pnpm/action-setup@v4
       - run: pnpm -r install
       - run: pnpm -r build
@@ -33,13 +34,23 @@ jobs:
       # Publishing uses npm trusted publishing (OIDC), configured on
       # npmjs.com per package: repo consentify/consentify, workflow
       # release.yml, no environment. No NPM_TOKEN involved; provenance is
-      # generated automatically. pnpm 10+ performs the OIDC exchange natively.
+      # generated automatically. Pack with pnpm (rewrites `workspace:^`),
+      # publish the tarball with npm (>= 11.5.1 performs the OIDC exchange).
       - name: Publish core
         if: startsWith(github.ref, 'refs/tags/core-v')
-        run: pnpm --filter @consentify/core publish --access public --no-git-checks
+        run: |
+          cd packages/core
+          pnpm pack
+          npm publish ./*.tgz --access public
       - name: Publish react
         if: startsWith(github.ref, 'refs/tags/react-v')
-        run: pnpm --filter @consentify/react publish --access public --no-git-checks
+        run: |
+          cd packages/react
+          pnpm pack
+          npm publish ./*.tgz --access public
       - name: Publish create-consentify
         if: startsWith(github.ref, 'refs/tags/create-consentify-v')
-        run: pnpm --filter create-consentify publish --access public --no-git-checks
+        run: |
+          cd packages/create-consentify
+          pnpm pack
+          npm publish ./*.tgz --access public

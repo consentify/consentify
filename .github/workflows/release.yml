@@ -19,42 +19,27 @@ jobs:
           fetch-depth: 0
       - name: Ensure tag is on main
         run: git merge-base --is-ancestor ${{ github.sha }} origin/main
+      # No registry-url here: setup-node would write an _authToken line into
+      # .npmrc, and even an empty NODE_AUTH_TOKEN overrides the OIDC flow.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
       - uses: pnpm/action-setup@v4
       - run: pnpm -r install
       - run: pnpm -r build
       - run: pnpm -r check
       - run: pnpm test
       - run: pnpm size
-      # `pnpm publish` (v10+) prefers OIDC trusted publishing over
-      # NODE_AUTH_TOKEN when id-token is available; no trusted publisher is
-      # configured on npmjs.com yet (tracked in #25), so the registry rejects
-      # it with E404. Until that's set up: pack with pnpm (rewrites
-      # `workspace:^`), publish the tarball with npm (token auth + provenance).
+      # Publishing uses npm trusted publishing (OIDC), configured on
+      # npmjs.com per package: repo consentify/consentify, workflow
+      # release.yml, no environment. No NPM_TOKEN involved; provenance is
+      # generated automatically. pnpm 10+ performs the OIDC exchange natively.
       - name: Publish core
         if: startsWith(github.ref, 'refs/tags/core-v')
-        run: |
-          cd packages/core
-          pnpm pack
-          npm publish ./*.tgz --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter @consentify/core publish --access public --no-git-checks
       - name: Publish react
         if: startsWith(github.ref, 'refs/tags/react-v')
-        run: |
-          cd packages/react
-          pnpm pack
-          npm publish ./*.tgz --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter @consentify/react publish --access public --no-git-checks
       - name: Publish create-consentify
         if: startsWith(github.ref, 'refs/tags/create-consentify-v')
-        run: |
-          cd packages/create-consentify
-          pnpm pack
-          npm publish ./*.tgz --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter create-consentify publish --access public --no-git-checks

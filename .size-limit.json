@@ -1,12 +1,12 @@
 [
   {
-    "path": "packages/core/dist/index.js",
+    "path": "packages/core/dist/index.min.js",
     "limit": "5 kb",
     "gzip": true
   },
   {
     "path": "packages/core/dist/consentify.iife.min.js",
-    "limit": "5 kb",
+    "limit": "5.25 kb",
     "gzip": true
   }
 ]

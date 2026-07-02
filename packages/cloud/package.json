@@ -21,10 +21,8 @@
     }
   ],
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9"
+    "node": ">=20.0.0"
   },
-  "packageManager": "pnpm@9.12.3",
   "keywords": [
     "consentify",
     "consent",
@@ -47,8 +45,9 @@
   "homepage": "https://github.com/consentify/consentify#readme",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "default": "./dist/index.js"
     }
   },
   "scripts": {

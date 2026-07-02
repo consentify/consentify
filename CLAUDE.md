@@ -24,7 +24,13 @@ pnpm -w --filter @consentify/core check
 # Run tests (vitest + happy-dom)
 pnpm test
 
-# Check bundle size (core < 5kb gzipped)
+# Run browser E2E tests (Playwright)
+pnpm e2e
+
+# Lint (biome, lint-only — no formatter)
+pnpm lint
+
+# Check bundle size (core ESM < 5kb gzipped, IIFE < 5.25kb)
 pnpm run size
 ```
 
@@ -61,7 +67,7 @@ Key design patterns:
 - `'necessary'` category is always `true` and cannot be disabled
 - Storage abstraction supports cookie (canonical) and localStorage (optional mirror)
 - State uses discriminated union: `{ decision: 'unset' }` | `{ decision: 'decided', snapshot }`
-- Typed event system: `on(type, handler)` / `once(type, handler)` for events `'change' | 'clear' | 'expiring'`; emits after `notifyListeners`
+- Typed event system: `on(type, handler)` / `once(type, handler)` for events `'change' | 'clear' | 'expiring'`; emits after `notifyListeners`. Cross-tab changes (BroadcastChannel) also emit `'change'`/`'clear'`.
 - `guard(category, onGrant, onRevoke?)` - headline integration primitive: runs `onGrant` immediately if consented or once consent is granted, optionally runs `onRevoke` on revocation. Returns a dispose function. Prefer this over hand-rolled `subscribe()` + `isGranted()` loops.
 - `enableDebug(instance)` - tree-shakeable debug adapter that logs consent changes via event system
 - `acceptAll()` / `rejectAll()` - convenience methods that set all user categories at once
@@ -93,7 +99,8 @@ Key design patterns:
 
 - Core includes an IIFE build: `dist/consentify.iife.js` and `dist/consentify.iife.min.js`
 - Built via esbuild, exposes all exports on `Consentify` global
-- Size budget: both `packages/core/dist/index.js` and `dist/consentify.iife.min.js` enforced at <5kb gzipped via `.size-limit.json`
+- Size budget via `.size-limit.json`: ESM `packages/core/dist/index.min.js` <5kb gzipped, IIFE `dist/consentify.iife.min.js` <5.25kb gzipped (IIFE wrapper + no tree-shaking costs extra)
+- The npm entry `dist/index.js` is an **unminified** esbuild bundle (debuggability, supply-chain reviewability); `dist/index.min.js` exists for size tracking and CDN use
 - For non-bundler environments (WordPress, static sites, CMS)
 
 ### React Package (`packages/react`)
@@ -119,5 +126,8 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
 - Cloud tests mock `fetch` and `localStorage` via `vi.stubGlobal`
-- Bundle size enforced via `size-limit` (`pnpm run size`) - core must stay under 5kb gzipped
+- Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (IIFE: 5.25kb)
+- Lint enforced via `pnpm lint` (biome, lint-only; `noNonNullAssertion`/`useTemplate`/`noDocumentCookie`/`noConfusingVoidType` deliberately off)
+- Framework guides: `docs/guides/nextjs.md`, `vue.md`, `svelte.md`, `solid.md` — state-wiring recipes, no bundled UI
+- Privacy/compliance: `docs/guides/cloud-privacy.md` — data collection, storage, and transmission in cloud mode
 - Design docs: `docs/plans/YYYY-MM-DD-<topic>-design.md`

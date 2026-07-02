@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createConsentify, defaultCategories, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, verifyProof, ConsentifyConfigError, type ConsentAdapter, type ConsentifySubscribable, type ConsentState, type ConsentProof, type Snapshot } from './index';
+import { createConsentify, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, verifyProof, ConsentifyConfigError, type ConsentAdapter, type ConsentifySubscribable, type ConsentState, type ConsentProof, type Snapshot } from './index';
 
 // Helper to encode a snapshot as document.cookie value
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o));
@@ -661,10 +661,18 @@ describe('enableConsentMode', () => {
         delete (window as any).gtag;
         clearAllCookies();
         localStorage.clear();
+        // Keep these instances off the shared BroadcastChannel: their gtag
+        // subscriptions would otherwise fire during later tests (including
+        // ones that stub `window` away) and pollute stderr.
+        vi.stubGlobal('BroadcastChannel', undefined);
 
         consent = createConsentify({
             policy: { categories: ['analytics', 'marketing', 'preferences'] as const },
         });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
     });
 
     it('returns no-op dispose and makes no gtag calls in SSR', () => {
@@ -845,7 +853,7 @@ describe('enableConsentMode', () => {
         expect(countAfter).toBe(countBefore);
     });
 
-    it('handles clear() (consent revoked)', () => {
+    it('clear() (consent revoked) resets gtag to denied defaults', () => {
         enableConsentMode(consent, {
             mapping: { analytics: ['analytics_storage'] },
         });
@@ -855,8 +863,33 @@ describe('enableConsentMode', () => {
 
         consent.clear();
 
-        const updatesAfter = countGtagCalls('consent', 'update');
-        expect(updatesAfter).toBe(updatesBefore);
+        expect(countGtagCalls('consent', 'update')).toBe(updatesBefore + 1);
+        const updateCalls = (window.dataLayer as any[]).filter(entry => {
+            const args = Array.from(entry);
+            return args[0] === 'consent' && args[1] === 'update';
+        });
+        const lastUpdate = Array.from(updateCalls[updateCalls.length - 1]) as unknown[];
+        expect((lastUpdate[2] as Record<string, string>).analytics_storage).toBe('denied');
+    });
+
+    it('clear() in opt-out mode resets gtag to granted defaults', () => {
+        const optOut = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            mode: 'opt-out',
+        });
+        enableConsentMode(optOut, {
+            mapping: { analytics: ['analytics_storage'] },
+        });
+
+        optOut.set({ analytics: false });
+        optOut.clear();
+
+        const updateCalls = (window.dataLayer as any[]).filter(entry => {
+            const args = Array.from(entry);
+            return args[0] === 'consent' && args[1] === 'update';
+        });
+        const lastUpdate = Array.from(updateCalls[updateCalls.length - 1]) as unknown[];
+        expect((lastUpdate[2] as Record<string, string>).analytics_storage).toBe('granted');
     });
 
     it('survives a throwing gtag and still subscribes', () => {
@@ -910,7 +943,7 @@ describe('enableConsentMode', () => {
                 choices: { necessary: true, analytics: true },
             },
         };
-        listeners.forEach(cb => cb());
+        listeners.forEach(cb => { cb(); });
 
         const updateCall = findGtagCall('consent', 'update');
         expect(updateCall).toBeDefined();
@@ -1032,6 +1065,48 @@ describe('multi-tab sync (BroadcastChannel)', () => {
 
         // Fires exactly once from the local notifyListeners(), not again from BroadcastChannel
         expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('set() in one instance emits "change" event in another', () => {
+        const c1 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const c2 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c2.on('change', handler);
+
+        c1.client.set({ analytics: true });
+
+        expect(handler).toHaveBeenCalledOnce();
+        const event = handler.mock.calls[0][0];
+        expect(event.from).toEqual({ decision: 'unset' });
+        expect(event.to.decision).toBe('decided');
+        expect(event.to.snapshot.choices.analytics).toBe(true);
+    });
+
+    it('clear() in one instance emits "clear" event in another', () => {
+        const c1 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c1.client.set({ analytics: true });
+        const c2 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c2.on('clear', handler);
+
+        c1.client.clear();
+
+        expect(handler).toHaveBeenCalledOnce();
+        expect(handler.mock.calls[0][0].timestamp).toBeTypeOf('number');
+    });
+
+    it('cross-tab guard() revocation fires onRevoke', () => {
+        const c1 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const c2 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const onGrant = vi.fn();
+        const onRevoke = vi.fn();
+        c2.guard('analytics', onGrant, onRevoke);
+
+        c1.set({ analytics: true });
+        expect(onGrant).toHaveBeenCalledOnce();
+
+        c1.set({ analytics: false });
+        expect(onRevoke).toHaveBeenCalledOnce();
     });
 });
 
@@ -1448,6 +1523,7 @@ describe('consent mode (opt-in / opt-out)', () => {
 
     it('enableConsentMode respects opt-out mode when unset', () => {
         vi.stubGlobal('window', { dataLayer: [], gtag: vi.fn() });
+        vi.stubGlobal('BroadcastChannel', undefined);
         const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
         enableConsentMode(c, { mapping: { analytics: ['analytics_storage'] } });
         expect(window.gtag).toHaveBeenCalledWith('consent', 'default', expect.objectContaining({
@@ -1457,6 +1533,7 @@ describe('consent mode (opt-in / opt-out)', () => {
 
     it('opt-in mode: enableConsentMode defaults to denied when unset', () => {
         vi.stubGlobal('window', { dataLayer: [], gtag: vi.fn() });
+        vi.stubGlobal('BroadcastChannel', undefined);
         const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-in' });
         enableConsentMode(c, { mapping: { analytics: ['analytics_storage'] } });
         expect(window.gtag).toHaveBeenCalledWith('consent', 'default', expect.objectContaining({
@@ -2104,5 +2181,147 @@ describe('Cloud mode (Mode B)', () => {
             typeof url === 'string' && url.includes('ingest.test'),
         ).length;
         expect(secondIngestCount).toBe(firstIngestCount);
+    });
+
+    it('does not re-report an already-sent decision on the next page load', async () => {
+        vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const init = {
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        };
+        const c = await createConsentify(init);
+        c.set({ analytics: true });
+        await vi.waitFor(() => {
+            expect(spy.mock.calls.some(([url]) =>
+                typeof url === 'string' && url.includes('ingest.test'),
+            )).toBe(true);
+        });
+        const firstIngestCount = spy.mock.calls.filter(([url]) =>
+            typeof url === 'string' && url.includes('ingest.test'),
+        ).length;
+
+        // Simulate a reload: a fresh instance hydrates the same decided state
+        // from the cookie and must not re-send it (dedup key is persisted).
+        await createConsentify(init);
+        await new Promise(r => setTimeout(r, 20));
+        const secondIngestCount = spy.mock.calls.filter(([url]) =>
+            typeof url === 'string' && url.includes('ingest.test'),
+        ).length;
+        expect(secondIngestCount).toBe(firstIngestCount);
+    });
+});
+
+// ============================================================
+// 14. destroy() and cleanup
+// ============================================================
+describe('destroy()', () => {
+    beforeEach(() => {
+        clearAllCookies();
+        MockBroadcastChannel.channels.clear();
+        vi.stubGlobal('BroadcastChannel', MockBroadcastChannel);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        MockBroadcastChannel.channels.clear();
+    });
+
+    it('listeners no longer fire after destroy', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const listener = vi.fn();
+        c.client.subscribe(listener);
+        c.client.set({ analytics: true });
+        expect(listener).toHaveBeenCalledTimes(1);
+
+        c.destroy();
+        c.client.set({ analytics: false });
+        expect(listener).toHaveBeenCalledTimes(1); // no additional call
+    });
+
+    it('destroyed instance stops receiving cross-tab updates', () => {
+        const c1 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const c2 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const listener = vi.fn();
+        c2.client.subscribe(listener);
+
+        c1.client.set({ analytics: true });
+        expect(listener).toHaveBeenCalledTimes(1);
+
+        c2.destroy();
+        c1.client.set({ analytics: false });
+        expect(listener).toHaveBeenCalledTimes(1); // no additional call after destroy
+    });
+
+    it('destroyed instance does not send cross-tab messages', () => {
+        const c1 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const c2 = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const listener2 = vi.fn();
+        c2.client.subscribe(listener2);
+
+        c1.destroy();
+        c1.client.set({ analytics: true });
+        expect(listener2).not.toHaveBeenCalled();
+    });
+
+    it('double destroy() does not throw', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        expect(() => {
+            c.destroy();
+            c.destroy();
+        }).not.toThrow();
+    });
+
+    it('event handlers cleared after destroy', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.on('change', handler);
+        c.destroy();
+        c.client.set({ analytics: true });
+        expect(handler).not.toHaveBeenCalled();
+    });
+});
+
+// ============================================================
+// 15. Cookie size warning
+// ============================================================
+describe('cookie size warning', () => {
+    beforeEach(clearAllCookies);
+
+    it('warns when encoded cookie exceeds 3.5KB on client.set', () => {
+        // Create 100 categories with 40-char names to generate large encoded value
+        const cats = Array.from({ length: 100 }, (_, i) => `cat_${i}_${'x'.repeat(32)}`) as any;
+        const c = createConsentify({ policy: { categories: cats } });
+
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        c.client.set({ [cats[0]]: true });
+        expect(spy).toHaveBeenCalledWith(
+            '[consentify] consent cookie exceeds 3.5KB; browsers cap at 4KB',
+        );
+        spy.mockRestore();
+    });
+
+    it('warns when encoded cookie exceeds 3.5KB on server.set', () => {
+        const cats = Array.from({ length: 100 }, (_, i) => `cat_${i}_${'x'.repeat(32)}`) as any;
+        const c = createConsentify({ policy: { categories: cats } });
+
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        c.server.set({ [cats[0]]: true });
+        expect(spy).toHaveBeenCalledWith(
+            '[consentify] consent cookie exceeds 3.5KB; browsers cap at 4KB',
+        );
+        spy.mockRestore();
+    });
+
+    it('does not warn for normal small policy', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        c.client.set({ analytics: true });
+        c.server.set({ marketing: true });
+        // Should not warn about cookie size
+        expect(spy.mock.calls.filter(
+            (call) => call[1]?.includes?.('cookie exceeds'),
+        )).toHaveLength(0);
+        spy.mockRestore();
     });
 });

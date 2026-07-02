@@ -50,6 +50,7 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `getServerSnapshot` | `() => ConsentState<T>` | Always returns `{ decision: 'unset' }` for SSR |
 | `on` | `(type, handler) => () => void` | Subscribe to typed events (`'change'`, `'clear'`, `'expiring'`). Returns unsubscribe |
 | `once` | `(type, handler) => () => void` | One-time event listener, auto-unsubscribes after first call |
+| `destroy` | `() => void` | Release the BroadcastChannel and clear all listeners and event handlers. Instance remains readable but no longer reactive. Safe to call multiple times. Useful for tests, HMR, and micro-frontends. |
 
 ## Server / Client Namespaces (advanced)
 
@@ -147,6 +148,10 @@ consent.on('expiring', (event) => {
   console.log(`Consent expires in ${event.daysRemaining.toFixed(0)} days`);
 });
 ```
+
+`'change'` and `'clear'` also fire when the consent state changes in **another tab** (via `BroadcastChannel`), so event handlers stay consistent with `subscribe()`/`guard()` across tabs.
+
+> **Note:** `'expiring'` is evaluated on init and on consent writes (including cross-tab syncs) — not on a timer. A tab left open across the warning threshold will see the event on its next state change or reload.
 
 ## Accept All / Reject All
 
@@ -253,6 +258,8 @@ If your site uses a strict Content Security Policy, pin the integrity hash and f
 Pair this with a CSP header such as `script-src 'self' 'nonce-%%CSP_NONCE%%'`. Generate the SRI hash per version you pin (e.g. `openssl dgst -sha384 -binary dist/consentify.iife.min.js | openssl base64 -A`). See [MDN: Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) for details.
 
 ## Consentify Dev / Cloud reporting (built into core)
+
+> **⚠️ Not live yet:** The hosted Consentify Dev platform (`cdn.consentify.dev` / `ingest.consentify.dev`) has not launched. Until it does, `createConsentify({ siteId })` against the default endpoints will reject with `ConsentifyConfigError`. Use self-hosted mode (`policy`) today, or point `endpoints` at your own infrastructure.
 
 Cloud analytics lives directly in `@consentify/core` — pass `siteId` to `createConsentify` and the factory becomes async, fetches your SiteConfig from the CDN, and starts event reporting automatically.
 

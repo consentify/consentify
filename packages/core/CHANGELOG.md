@@ -1,5 +1,17 @@
 # @consentify/core
 
+## 2.6.0
+
+### Minor Changes
+
+- Add `destroy()` to release the BroadcastChannel and all listeners (useful for tests, HMR, micro-frontends). Warn when the encoded consent cookie exceeds 3.5KB (browsers cap cookies at 4KB).
+- Consent lifecycle fixes and packaging improvements:
+
+  - **`enableConsentMode` now resets Google Consent Mode on revocation**: `clear()` sends a `consent update` with the pre-decision defaults (denied for opt-in, granted for opt-out) instead of leaving the last granted state live until reload.
+  - **Cross-tab changes now emit typed events**: a `set()`/`clear()` in another tab emits `'change'`/`'clear'` on this tab's instance, consistent with `subscribe()`/`guard()` behavior.
+  - **Cloud reporting no longer re-sends the same decision on every page load**: the dedup key is persisted to localStorage (also suppresses cross-tab duplicate reports).
+  - **Packaging**: `exports` now lists `types` first and adds a `default` condition (fixes `require()` resolution on Node ≥ 20.17); the npm ESM entry `dist/index.js` ships unminified for debuggability (`dist/index.min.js` is the minified variant); removed `engines.pnpm` constraint from the published manifest.
+
 ## 2.5.0
 
 ### Minor Changes

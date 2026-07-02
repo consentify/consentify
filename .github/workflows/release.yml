@@ -21,7 +21,7 @@ jobs:
         run: git merge-base --is-ancestor ${{ github.sha }} origin/main
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
       - uses: pnpm/action-setup@v4
       - run: pnpm -r install

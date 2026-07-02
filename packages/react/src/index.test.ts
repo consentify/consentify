@@ -86,7 +86,7 @@ describe('useConsentify', () => {
     it('works with minimal ConsentifySubscribable interface', () => {
         const state: ConsentState<TestCategory> = { decision: 'unset' };
         const minimal: ConsentifySubscribable<TestCategory> = {
-            subscribe: (cb) => {
+            subscribe: () => {
                 // No-op but must return valid unsubscribe
                 return () => {};
             },

@@ -213,19 +213,45 @@ The primary APIs above cover most integrations. For tables, the `server` / `clie
 
 - **[API Reference](./docs/guides/api-reference.md)** — every method, option, and type
 - **[Next.js Guide](./docs/guides/nextjs.md)** — App Router, Server Components, Route Handlers
+- **[Vue 3 Guide](./docs/guides/vue.md)** — composables, reactive state, conditional rendering
+- **[Svelte Guide](./docs/guides/svelte.md)** — stores, reactive declarations, SSR with SvelteKit
+- **[Solid.js Guide](./docs/guides/solid.md)** — signals, effects, cleanup patterns
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
-| [@consentify/core](./packages/core) | Headless consent SDK — TypeScript-first, SSR-safe, zero dependencies. Includes built-in Consentify Dev mode (`createConsentify({ siteId })`). |
+| [@consentify/core](./packages/core) | Headless consent SDK — TypeScript-first, SSR-safe, zero dependencies. Includes built-in Consentify Dev mode (`createConsentify({ siteId })`, hosted platform not live yet). |
 | [@consentify/react](./packages/react) | React hook for `@consentify/core` |
 | [create-consentify](./packages/create-consentify) | `npx` scaffolder — wires the SDK into Next.js, Vite, Remix, Astro, or vanilla projects |
 | ~~[@consentify/cloud](./packages/cloud)~~ | **Deprecated (v2.0.0, no-op shell).** Cloud functionality moved into `@consentify/core`. |
 
+## How it compares
+
+| | Consentify | Banner libraries¹ | SaaS CMPs² |
+|---|-----------|-------------------|------------|
+| **Approach** | Headless SDK — you own the UI | Bundled, configurable banner | Hosted widget + dashboard |
+| **Server / SSR API** | Yes — raw `Cookie` / `Set-Cookie` headers | No — browser-only | No — browser-only script |
+| **TypeScript-first** | Yes — typed categories end-to-end | Varies | No SDK |
+| **Bundle size** | < 5 kB gzipped, enforced in CI | up to ~150 kB | External hosted script |
+| **Google Consent Mode v2** | Built-in (`enableConsentMode`) | Manual wiring | Usually built-in |
+| **Cost** | Free (MIT) | Free (MIT) | ~$30–$1,100+/month |
+
+¹ vanilla-cookieconsent, Klaro, Osano cookieconsent &nbsp;·&nbsp; ² OneTrust, Cookiebot, CookieYes
+
+The closest project in spirit is **c15t** — also headless and TypeScript-based. Consentify differentiates on the server-side header API (SSR without a consent flash), the enforced < 5 kB budget, and zero runtime dependencies.
+
+## Non-goals
+
+- **Not a TCF 2.2 CMP** — IAB Transparency & Consent Framework support would multiply bundle size. Publishers running programmatic advertising requiring a TCF CMP should use a dedicated solution; Consentify works alongside them.
+- **No bundled banner UI in core** — Consentify is headless by design. UI components live in your codebase or the hosted platform; this keeps core minimal and lets you own your UX.
+- **No per-script auto-blocking** — Don't use Consentify to scan and rewrite `<script>` tags. Use `guard()` to conditionally load your own scripts; this gives you full control and better performance.
+
 ## Coming Soon: Consentify Dev
 
 A hosted consent management platform — the tool developers and marketers use to configure policies, translate banners, and watch opt-in rates. It pairs with this SDK via `createConsentify({ siteId })`.
+
+> **Not live yet.** Until launch, `createConsentify({ siteId })` will fail against the default endpoints — use self-hosted mode (`policy`) today.
 
 - **Visual banner builder** — drag-and-drop consent UI
 - **Consent analytics dashboard** — see opt-in/out rates

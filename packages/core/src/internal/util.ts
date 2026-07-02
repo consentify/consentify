@@ -61,7 +61,7 @@ export function isValidSnapshot<T extends UserCategory>(s: unknown): s is Snapsh
         typeof (s as { givenAt?: unknown }).givenAt !== 'string' ||
         typeof (s as { choices?: unknown }).choices !== 'object' || (s as { choices: unknown }).choices === null
     ) return false;
-    if (isNaN(Date.parse((s as { givenAt: string }).givenAt))) return false;
+    if (Number.isNaN(Date.parse((s as { givenAt: string }).givenAt))) return false;
     const choices = (s as { choices: Record<string, unknown> }).choices;
     for (const k in choices) {
         if (typeof choices[k] !== 'boolean') return false;

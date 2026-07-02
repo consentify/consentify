@@ -14,8 +14,17 @@ const mimeTypes = {
 };
 
 const server = http.createServer((req, res) => {
+	let pathname;
+	try {
+		pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+	} catch {
+		res.writeHead(400);
+		res.end('Bad request');
+		return;
+	}
+
 	// Map /consentify.iife.min.js to the built bundle
-	if (req.url === '/consentify.iife.min.js') {
+	if (pathname === '/consentify.iife.min.js') {
 		const bundlePath = path.join(__dir, '../packages/core/dist/consentify.iife.min.js');
 		try {
 			const content = fs.readFileSync(bundlePath);
@@ -29,16 +38,17 @@ const server = http.createServer((req, res) => {
 		}
 	}
 
-	// Serve fixtures directory
+	// Serve fixtures directory. Contain the resolved path within it: normalize
+	// after joining, then require the fixtures root itself or a child of it
+	// (root + separator prefix, so sibling dirs like `fixtures-evil` never match).
 	const fixtures = path.join(__dir, 'fixtures');
-	let filePath = path.join(fixtures, req.url === '/' ? 'index.html' : req.url);
-
-	// Prevent path traversal
-	if (!filePath.startsWith(fixtures)) {
+	const resolved = path.normalize(path.join(fixtures, pathname));
+	if (resolved !== fixtures && !resolved.startsWith(fixtures + path.sep)) {
 		res.writeHead(404);
 		res.end('Not found');
 		return;
 	}
+	let filePath = pathname === '/' ? path.join(fixtures, 'index.html') : resolved;
 
 	try {
 		const stat = fs.statSync(filePath);

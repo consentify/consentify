@@ -22,7 +22,7 @@
         "esbuild": "0.28.1",
         "happy-dom": "^20.10.6",
         "size-limit": "12.1.0",
-        "typescript": "5.9.3",
+        "typescript": "6.0.3",
         "vitest": "^4.1.9"
     },
     "packageManager": "pnpm@10.34.4"

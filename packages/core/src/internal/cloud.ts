@@ -13,6 +13,7 @@ export interface SiteConfig {
 export const DEFAULT_CONFIG_ENDPOINT = 'https://cdn.consentify.dev';
 export const DEFAULT_INGEST_ENDPOINT = 'https://ingest.consentify.dev';
 export const EVENT_BUFFER_KEY = 'consentify_event_buffer';
+export const LAST_EVENT_KEY = 'consentify_last_event';
 
 export type CloudAction = 'accept_all' | 'reject_all' | 'customize';
 
@@ -88,10 +89,20 @@ export function startCloudReporting<T extends UserCategory>(
     if (!isBrowser()) return () => {};
     const url = `${opts.ingestEndpoint.replace(/\/$/, '')}/v1/events`;
     const userCats = instance.policy.categories.filter(c => c !== 'necessary');
-    // Dedup consecutive events by `policy + givenAt`; `givenAt` is a fresh ISO
+    // Dedup events by `siteId + policy + givenAt`; `givenAt` is a fresh ISO
     // timestamp on every real write, so identical snapshots (e.g. cross-tab
-    // echoes) share a key and are suppressed.
-    let lastKey = '';
+    // echoes) share a key and are suppressed. The key is mirrored to
+    // localStorage so the init-time send of an already-decided state does not
+    // re-report the same decision on every page load. On storage failure the
+    // dedup silently degrades to in-memory only.
+    const lastKeyStore = (key?: string): string => {
+        try {
+            if (!canLocalStorage()) return '';
+            if (key) window.localStorage.setItem(LAST_EVENT_KEY, key);
+            return window.localStorage.getItem(LAST_EVENT_KEY) ?? '';
+        } catch { return ''; }
+    };
+    let lastKey = lastKeyStore();
 
     // Flush any pending event left over from a previous session. Whether the
     // retry succeeds or fails, drop it - no infinite re-queue.
@@ -102,9 +113,11 @@ export function startCloudReporting<T extends UserCategory>(
 
     const send = (state: ConsentState<T>): void => {
         if (state.decision !== 'decided') return;
-        const key = state.snapshot.policy + '|' + state.snapshot.givenAt;
-        if (key === lastKey) return;
+        const key = opts.siteId + '|' + state.snapshot.policy + '|' + state.snapshot.givenAt;
+        // Check storage too: another tab may have reported this snapshot already.
+        if (key === lastKey || key === lastKeyStore()) return;
         lastKey = key;
+        lastKeyStore(key);
         // Payload key is `visitorHash` to match the ingest-endpoint contract;
         // the SDK config calls it `visitorId` everywhere else.
         const body = JSON.stringify({

@@ -18,7 +18,6 @@ import type {
     Necessary,
     Snapshot,
     StorageKind,
-    UserCategory,
     VisitorIdSource,
 } from './internal/types';
 import { ConsentifyConfigError } from './internal/types';
@@ -227,6 +226,12 @@ interface ConsentifyInstanceShared<Cs extends readonly string[]> {
         type: K,
         handler: ConsentEventHandler<ArrToUnion<Cs>, K>,
     ) => () => void;
+    /**
+     * Release the BroadcastChannel and clear all listeners and event handlers.
+     * The instance remains readable but no longer reactive. Safe to call multiple times.
+     * Useful for tests, HMR, and micro-frontends.
+     */
+    readonly destroy: () => void;
 }
 
 /**
@@ -362,7 +367,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     const isExpired = (givenAt: string): boolean => {
         if (!consentMaxAgeDays) return false;
         const givenTime = Date.parse(givenAt);
-        return isNaN(givenTime) || Date.now() - givenTime > consentMaxAgeDays * MS_PER_DAY;
+        return Number.isNaN(givenTime) || Date.now() - givenTime > consentMaxAgeDays * MS_PER_DAY;
     };
 
     const allowed = new Set<Necessary | T>(['necessary', ...(init.policy.categories as unknown as T[])]);
@@ -410,7 +415,12 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         if (kind === 'cookie') { if (isBrowser()) document.cookie = buildSetCookieHeader(cookieName, '', { ...cookieCfg, maxAgeSec: 0 }); }
         else if (kind === 'localStorage') ls('c');
     };
+    const warnIfOversized = (value: string): void => {
+        if (value.length > 3500) logW('consent cookie exceeds 3.5KB; browsers cap at 4KB');
+    };
+
     const writeClientRaw = (value: string): void => {
+        warnIfOversized(value);
         let primary: StorageKind = 'cookie';
         for (const k of storageOrder) {
             if (k === 'cookie' || (k === 'localStorage' && canLocalStorage())) { primary = k; break; }
@@ -461,7 +471,9 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
                 givenAt: toISO(),
                 choices: normalize({ ...base, ...choices }),
             };
-            return buildSetCookieHeader(cookieName, enc(snapshot), cookieCfg);
+            const encoded = enc(snapshot);
+            warnIfOversized(encoded);
+            return buildSetCookieHeader(cookieName, encoded, cookieCfg);
         },
         clear: (): string => buildSetCookieHeader(cookieName, '', { ...cookieCfg, maxAgeSec: 0 })
     };
@@ -493,6 +505,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     // ---- Typed event emitter ----
     // Handlers are typed at the on()/emit() boundary; the Map stores the union since
     // TypeScript can't express per-key handler types in a single Map.
+    // biome-ignore lint/suspicious/noExplicitAny: see above — the Map erases per-key handler types
     const eventHandlers = new Map<string, Set<(event: any) => void>>();
 
     function emit<K extends keyof ConsentEventMap<T>>(type: K, event: ConsentEventMap<T>[K]) {
@@ -549,8 +562,30 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         bc = new BroadcastChannel(`consentify:${cookieName}`);
         // Per-listener errors are already caught inside `notifyListeners`; other
         // helpers here (`syncState`, `checkExpiring`) only read validated state.
-        bc.onmessage = () => { syncState(); notifyListeners(); checkExpiring(); };
+        // Events mirror local semantics: a write in another tab emits 'change',
+        // a clear emits 'clear'. Deep-compare is fine here — messages are rare
+        // and only sent on real changes.
+        bc.onmessage = () => {
+            const from = cachedState;
+            syncState();
+            const to = cachedState;
+            notifyListeners();
+            if (JSON.stringify(from) !== JSON.stringify(to)) {
+                if (to.decision === 'decided') emit('change', { from, to, timestamp: Date.now() });
+                else emit('clear', { timestamp: Date.now() });
+            }
+            checkExpiring();
+        };
     }
+
+    const destroy = (): void => {
+        if (bc) {
+            bc.close();
+            bc = null;
+        }
+        listeners.clear();
+        eventHandlers.clear();
+    };
     // ======================================================
 
     // ---- Adapter + visitor id ----
@@ -757,6 +792,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         guard: client.guard,
         on,
         once,
+        destroy,
     };
     return instance as unknown as ConsentifyInstance<Cs> | ConsentifyAsyncInstance<Cs>;
 }

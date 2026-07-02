@@ -1,6 +1,6 @@
 {
   "name": "@consentify/core",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "Headless cookie consent SDK - zero dependencies, TypeScript-first, SSR-safe.",
   "author": {
     "name": "Roman Denysov",
@@ -21,10 +21,8 @@
     }
   ],
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9"
+    "node": ">=20.0.0"
   },
-  "packageManager": "pnpm@9.12.3",
   "keywords": [
     "cookie",
     "consent",
@@ -56,12 +54,13 @@
   "homepage": "https://github.com/consentify/consentify#readme",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json && esbuild src/index.ts --bundle --format=esm --minify --sourcemap --outfile=dist/index.js && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --outfile=dist/consentify.iife.js && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --minify --sourcemap --outfile=dist/consentify.iife.min.js",
+    "build": "rimraf dist && tsc -p tsconfig.build.json && esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js && esbuild src/index.ts --bundle --format=esm --minify --outfile=dist/index.min.js && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --outfile=dist/consentify.iife.js && esbuild src/index.ts --bundle --format=iife --global-name=Consentify --minify --sourcemap --outfile=dist/consentify.iife.min.js",
     "check": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

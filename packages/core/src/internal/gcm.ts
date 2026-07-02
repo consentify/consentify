@@ -49,7 +49,7 @@ export function enableConsentMode<T extends string>(
 
   if (typeof window.gtag !== 'function') {
     window.gtag = function gtag() {
-      // eslint-disable-next-line prefer-rest-params
+      // biome-ignore lint/complexity/noArguments: GTM requires the Arguments object, not an array — matches Google's official snippet
       window.dataLayer.push(arguments);
     };
   }
@@ -88,9 +88,10 @@ export function enableConsentMode<T extends string>(
     safeGtag('consent', 'update', initial);
   }
 
+  // Unconditional: `clear()` (revocation) must reach gtag too. `resolve()`
+  // returns the pre-decision defaults for unset state, so this restores
+  // denied (opt-in) / granted (opt-out) instead of leaving the last update live.
   return instance.subscribe(() => {
-    if (instance.get().decision === 'decided') {
-      safeGtag('consent', 'update', resolve());
-    }
+    safeGtag('consent', 'update', resolve());
   });
 }

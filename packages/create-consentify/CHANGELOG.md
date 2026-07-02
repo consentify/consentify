@@ -1,5 +1,11 @@
 # create-consentify
 
+## 0.2.1
+
+### Patch Changes
+
+- Packaging fixes: `exports` lists `types` first and adds a `default` condition (react); ship the MIT LICENSE file in the tarball (create-consentify); remove `engines.pnpm` constraint from published manifests.
+
 ## 0.2.0
 
 ### Minor Changes
@@ -13,7 +19,7 @@
   export const consent = await createConsentify({
     siteId: process.env.NEXT_PUBLIC_CONSENTIFY_SITE_ID!,
     apiKey: process.env.NEXT_PUBLIC_CONSENTIFY_API_KEY,
-    mode: 'opt-in',
+    mode: "opt-in",
   });
   ```
 
@@ -23,4 +29,4 @@
 
   Existing self-hosted scaffolds (no `--site-id` flag, no SaaS opt-in) are
   unaffected and continue to emit a synchronous `createConsentify({ policy,
-  mode })` config.
+mode })` config.

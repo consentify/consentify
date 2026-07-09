@@ -15,7 +15,7 @@
         "release": "changeset publish"
     },
     "devDependencies": {
-        "@biomejs/biome": "2.5.2",
+        "@biomejs/biome": "2.5.3",
         "@changesets/cli": "2.31.0",
         "@playwright/test": "1.61.1",
         "@size-limit/file": "12.1.0",
@@ -23,7 +23,7 @@
         "happy-dom": "^20.10.6",
         "size-limit": "12.1.0",
         "typescript": "5.9.3",
-        "vitest": "^4.1.9"
+        "vitest": "^4.1.10"
     },
     "packageManager": "pnpm@10.34.4"
 }

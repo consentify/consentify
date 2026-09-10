@@ -18,10 +18,10 @@
         "@biomejs/biome": "2.5.2",
         "@changesets/cli": "2.31.0",
         "@playwright/test": "1.61.1",
-        "@size-limit/file": "12.1.0",
+        "@size-limit/file": "13.0.3",
         "esbuild": "0.28.1",
         "happy-dom": "^20.10.6",
-        "size-limit": "12.1.0",
+        "size-limit": "13.0.3",
         "typescript": "5.9.3",
         "vitest": "^4.1.9"
     },

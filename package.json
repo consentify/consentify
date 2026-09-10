@@ -15,12 +15,12 @@
         "release": "changeset publish"
     },
     "devDependencies": {
-        "@biomejs/biome": "2.5.2",
+        "@biomejs/biome": "2.5.12",
         "@changesets/cli": "2.31.0",
-        "@playwright/test": "1.61.1",
+        "@playwright/test": "1.63.0",
         "@size-limit/file": "12.1.0",
-        "esbuild": "0.28.1",
-        "happy-dom": "^20.10.6",
+        "esbuild": "0.28.2",
+        "happy-dom": "^20.14.0",
         "size-limit": "12.1.0",
         "typescript": "5.9.3",
         "vitest": "^4.1.9"

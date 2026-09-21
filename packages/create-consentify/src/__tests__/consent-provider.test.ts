@@ -24,6 +24,13 @@ describe('generateReactProvider', () => {
         expect(out).not.toContain(`'pending'`);
     });
 
+    it.each(flavors)(`%s: hides the dialog until mount so SSR does not paint it`, (flavor) => {
+        const out = generateReactProvider(flavor);
+        expect(out).toContain(`import { useEffect, useState } from 'react';`);
+        expect(out).toContain(`useState(false)`);
+        expect(out).toContain(`mounted && state.decision === 'unset'`);
+    });
+
     it(`nextjs-app: emits 'use client' directive at the top`, () => {
         const out = generateReactProvider('nextjs-app');
         expect(out.startsWith("'use client';")).toBe(true);

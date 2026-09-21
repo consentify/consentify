@@ -82,7 +82,7 @@ Key design patterns:
 - Event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`
 
 ### Common SDK API mistakes to avoid
-- `enableConsentMode(instance, opts)` accepts only `{ mapping, waitForUpdate? }` - there is **no** `defaults:` key. The `gtag('consent','default',...)` defaults belong in the HTML `<head>`, not in the SDK call.
+- `enableConsentMode(instance, opts)` accepts `{ mapping, waitForUpdate?, sendDefault? }` - there is **no** `defaults:` key. The `gtag('consent','default',...)` command belongs in the HTML `<head>`. Pass `sendDefault: false` so the SDK only sends `update`.
 - `ConsentState.decision` is `'unset' | 'decided'` - never `'pending'`.
 
 ### SSR Safety

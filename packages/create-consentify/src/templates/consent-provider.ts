@@ -5,16 +5,23 @@ export function generateReactProvider(flavor: ProviderFlavor): string {
     const relativeImport =
         flavor === 'nextjs-app' || flavor === 'nextjs-pages' ? '@/lib/consent' : '../lib/consent';
 
-    return `${useClientDirective}import { useConsentify } from '@consentify/react';
+    return `${useClientDirective}import { useEffect, useState } from 'react';
+import { useConsentify } from '@consentify/react';
 import { consent } from '${relativeImport}';
 
 export function ConsentProvider({ children }: { children: React.ReactNode }) {
     const state = useConsentify(consent);
+    // The server snapshot is always unset. Wait until mount so a returning
+    // visitor's cookie is read before the dialog can paint.
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     return (
         <>
             {children}
-            {state.decision === 'unset' && (
+            {mounted && state.decision === 'unset' && (
                 <div
                     role="dialog"
                     aria-label="Cookie consent"

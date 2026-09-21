@@ -81,7 +81,7 @@ export async function run(flags: ParsedFlags = {}): Promise<void> {
         console.log();
         log.info(pc.bold('Google Consent Mode v2 default state (add to <head> BEFORE any GA/GTM):'));
         console.log();
-        for (const line of gcmDefaultScript().split('\n')) {
+        for (const line of gcmDefaultScript(ctx.categories, ctx.mode).split('\n')) {
             console.log('  ' + pc.dim(line));
         }
     }

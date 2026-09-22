@@ -9,7 +9,7 @@
 
 ## Why Consentify?
 
-- **🪶 Lightweight** — Zero runtime dependencies, ~2KB minified + gzipped
+- **🪶 Lightweight** — Zero runtime dependencies, ~4.9 kB minified + gzipped
 - **🔒 Type-safe** — Full TypeScript support with inference for your categories
 - **⚡ SSR-ready** — Separate server/client APIs that never touch the DOM on server
 - **⚛️ React-ready** — Built-in `useSyncExternalStore` support for React 18+
@@ -211,23 +211,24 @@ createConsentify({
 
 ## API Reference
 
+Full method list: [API reference](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md).
+
 ### `createConsentify(options)`
 
-Returns an object with `policy`, `client`, and `server` properties.
+Returns a flat instance plus `policy`, `client`, and `server`. Call `isGranted`, `acceptAll`, `rejectAll`, and `getProof` on the instance. `client.get(category)` is deprecated — use `isGranted`.
 
 #### `client` (browser)
 
+The browser store used with `useSyncExternalStore`. `acceptAll`, `rejectAll`, and `getProof` are not on `client`.
+
 | Method | Description |
 |--------|-------------|
-| `get()` | Returns `ConsentState` - `{ decision: 'decided', snapshot }` or `{ decision: 'unset' }` |
-| `get(category)` | Returns `boolean` - `true` if category is consented (`'necessary'` always returns `true`) |
+| `get()` | Returns `ConsentState` — `{ decision: 'decided', snapshot }` or `{ decision: 'unset' }` |
 | `set(choices)` | Merges choices and persists; notifies subscribers if changed |
 | `clear()` | Removes stored consent; notifies subscribers |
-| `acceptAll()` | Sets all user categories to `true` |
-| `rejectAll()` | Sets all user categories to `false` (necessary stays `true`) |
-| `getProof()` | Returns `ConsentProof` with tamper-evident signature, or `null` if unset |
 | `subscribe(cb)` | Subscribe to changes; returns unsubscribe function |
 | `getServerSnapshot()` | Returns `{ decision: 'unset' }` for SSR hydration |
+| `guard(category, onGrant, onRevoke?)` | Runs `onGrant` when that category is granted |
 
 #### `server` (Node.js)
 

@@ -15,6 +15,12 @@ type GoogleConsentValue = 'granted' | 'denied';
 export interface ConsentModeOptions<T extends string> {
   mapping: Partial<Record<'necessary' | T, GoogleConsentType[]>>;
   waitForUpdate?: number;
+  /**
+   * Send `gtag('consent', 'default', ...)` on init. Set this to false when a
+   * `<head>` snippet already sent that default before tags ran. Updates still
+   * fire. Defaults to true.
+   */
+  sendDefault?: boolean;
 }
 
 export const defaultConsentModeMapping = {
@@ -79,10 +85,13 @@ export function enableConsentMode<T extends string>(
   };
 
   const initial = resolve();
-  const defaultPayload: Record<string, unknown> = options.waitForUpdate != null
-    ? { ...initial, wait_for_update: options.waitForUpdate }
-    : initial;
-  safeGtag('consent', 'default', defaultPayload);
+  const sendDefault = options.sendDefault !== false;
+  if (sendDefault) {
+    const defaultPayload: Record<string, unknown> = options.waitForUpdate != null
+      ? { ...initial, wait_for_update: options.waitForUpdate }
+      : initial;
+    safeGtag('consent', 'default', defaultPayload);
+  }
 
   if (instance.get().decision === 'decided') {
     safeGtag('consent', 'update', initial);

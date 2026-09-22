@@ -76,7 +76,8 @@ Wires Google Consent Mode v2 to a consent instance. Returns a dispose function.
 | Option | Type | Description |
 |--------|------|-------------|
 | `mapping` | `Partial<Record<category, GoogleConsentType[]>>` | Maps consent categories to Google consent types |
-| `waitForUpdate` | `number` | Milliseconds to wait before applying defaults (optional) |
+| `waitForUpdate` | `number` | Milliseconds Google waits for an update after the default (optional, sent only with the default) |
+| `sendDefault` | `boolean` | Send `gtag('consent', 'default', ...)` on init. Default `true`. Set `false` when a `<head>` snippet already sent that default; updates still fire |
 
 Google consent types: `ad_storage`, `ad_user_data`, `ad_personalization`, `analytics_storage`, `functionality_storage`, `personalization_storage`, `security_storage`.
 
@@ -93,7 +94,7 @@ const dispose = enableConsentMode(consent, {
 });
 ```
 
-`enableConsentMode` automatically calls `gtag('consent', 'default', ...)` on init and `gtag('consent', 'update', ...)` whenever the user changes their choices. It bootstraps `dataLayer` and `gtag` if they don't exist.
+`enableConsentMode` calls `gtag('consent', 'default', ...)` on init unless `sendDefault` is `false`, and `gtag('consent', 'update', ...)` whenever the user changes their choices. It bootstraps `dataLayer` and `gtag` if they don't exist. Google wants the default in the first `<head>` script, before tags run. When that snippet is in place, pass `sendDefault: false` so the default is sent once.
 
 Custom mapping:
 

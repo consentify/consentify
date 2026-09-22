@@ -16,8 +16,11 @@ function gcmBlock(ctx: TemplateContext): string {
     return `
 enableConsentMode(consent, {
     mapping: {
+        necessary: ['security_storage'],
 ${formatGcmMapping(ctx.categories)}
     },
+    // The <head> snippet already sent gtag('consent', 'default').
+    sendDefault: false,
 });
 `;
 }

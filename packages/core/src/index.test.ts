@@ -779,6 +779,50 @@ describe('enableConsentMode', () => {
         expect(countGtagCalls('consent', 'update')).toBe(0);
     });
 
+    it('sendDefault: false skips the default command when consent is unset', () => {
+        enableConsentMode(consent, {
+            mapping: { analytics: ['analytics_storage'] },
+            sendDefault: false,
+            waitForUpdate: 500,
+        });
+
+        expect(countGtagCalls('consent', 'default')).toBe(0);
+        expect(countGtagCalls('consent', 'update')).toBe(0);
+    });
+
+    it('sendDefault: false still sends update when consent is already decided', () => {
+        consent.set({ analytics: true, marketing: false });
+
+        enableConsentMode(consent, {
+            mapping: {
+                analytics: ['analytics_storage'],
+                marketing: ['ad_storage'],
+            },
+            sendDefault: false,
+        });
+
+        expect(countGtagCalls('consent', 'default')).toBe(0);
+        expect(countGtagCalls('consent', 'update')).toBe(1);
+
+        const updateCall = findGtagCall('consent', 'update');
+        expect(updateCall!.analytics_storage).toBe('granted');
+        expect(updateCall!.ad_storage).toBe('denied');
+    });
+
+    it('sendDefault: false still sends update on set()', () => {
+        enableConsentMode(consent, {
+            mapping: { analytics: ['analytics_storage'] },
+            sendDefault: false,
+        });
+
+        consent.set({ analytics: true });
+
+        expect(countGtagCalls('consent', 'default')).toBe(0);
+        const updateCall = findGtagCall('consent', 'update');
+        expect(updateCall!.analytics_storage).toBe('granted');
+        expect(updateCall!).not.toHaveProperty('wait_for_update');
+    });
+
     it('calls gtag consent update on set()', () => {
         enableConsentMode(consent, {
             mapping: {

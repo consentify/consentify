@@ -1,4 +1,4 @@
-const CATEGORY_TO_GOOGLE: Record<string, readonly string[]> = {
+export const CATEGORY_TO_GOOGLE: Record<string, readonly string[]> = {
     analytics: ['analytics_storage'],
     marketing: ['ad_storage', 'ad_user_data', 'ad_personalization'],
     preferences: ['personalization_storage'],

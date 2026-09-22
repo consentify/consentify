@@ -32,13 +32,15 @@ describe('generateConsentConfig', () => {
         expect(out).toContain(`mode: 'opt-out'`);
     });
 
-    it('wires GCM without any defaults option (SDK does not accept defaults)', () => {
+    it('wires GCM to send updates only (the head snippet owns the default)', () => {
         const out = generateConsentConfig(ctx({ enableGcm: true }));
         expect(out).toContain(`import { createConsentify, enableConsentMode } from '@consentify/core';`);
         expect(out).toContain(`enableConsentMode(consent, {`);
         expect(out).toContain(`mapping: {`);
         expect(out).toContain(`analytics: ['analytics_storage']`);
         expect(out).toContain(`marketing: ['ad_storage', 'ad_user_data', 'ad_personalization']`);
+        expect(out).toContain(`necessary: ['security_storage']`);
+        expect(out).toContain(`sendDefault: false`);
         expect(out).not.toMatch(/defaults\s*:/);
     });
 
@@ -107,6 +109,14 @@ describe('generateVanillaConfig', () => {
         const out = generateVanillaConfig(ctx({ framework: 'vanilla' }));
         expect(out).toContain("state.decision === 'unset'");
         expect(out).not.toContain("'pending'");
+    });
+
+    it('tells enableConsentMode not to repeat the head default', () => {
+        const out = generateVanillaConfig(ctx({ framework: 'vanilla', enableGcm: true }));
+        expect(out).toContain(`necessary: ['security_storage']`);
+        expect(out).toContain(`sendDefault: false`);
+        expect(out).toContain(`analytics: ['analytics_storage']`);
+        expect(out).not.toMatch(/defaults\s*:/);
     });
 });
 

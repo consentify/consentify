@@ -268,6 +268,8 @@ const ccpa = createConsentify({
 ccpa.isGranted('analytics'); // true (default until user opts out)
 ```
 
+A stored record that has no value for a category (one added later under an unchanged `policy.identifier`) reads with the mode default for that category: granted in opt-out, denied in opt-in. Writes fill unspecified categories the same way, so `isGranted`, `get()`, Consent Mode and the next `set()` agree.
+
 ## `useConsentify(instance, category?)` (React)
 
 ```ts
@@ -287,7 +289,7 @@ const analyticsGranted = useConsentify(consent, 'analytics');
 For non-bundled apps (WordPress, static sites), use the IIFE build:
 
 ```html
-<script src="https://unpkg.com/@consentify/core/dist/consentify.iife.min.js"></script>
+<script src="https://unpkg.com/@consentify/core@3/dist/consentify.iife.min.js"></script>
 <script>
   var consent = Consentify.createConsentify({
     policy: { categories: ['analytics', 'marketing'] }
@@ -345,6 +347,7 @@ const consent = await createCloudConsentify({
 | `fallback` | `{ categories: readonly string[]; identifier?: string; textVersion?: string; mode?: ConsentMode; consentMaxAgeDays?: number }` | *required* | Local policy used when no SiteConfig is available (network error, timeout, non-OK status, malformed config) and nothing is cached. Set `identifier` to the site's published `policyIdentifier`; otherwise returning visitors see the banner again while the fallback is active. `textVersion` is recorded as `pv` while the fallback is in use |
 | `timeoutMs` | `number` | `3000` | Deadline for the whole two-hop SiteConfig fetch; the requests are aborted when it passes |
 | `configTtlSec` | `number` | `3600` | How long a cached SiteConfig is used without a request. After that it is served stale and refreshed in the background |
+| `configMaxStaleSec` | `number` | `604800` (7 days) | Oldest cached SiteConfig that is still served stale. An older entry counts as no cache: the factory waits for the CDN, and uses `fallback` if that fails |
 | `publicKey` | `string` | — | Public key of the site. Sent only as the `X-Consentify-Key` header of browser events, never in the body. Not a secret: it ships in your client bundle |
 | `endpoints.config` | `string` | `https://cdn.consentify.dev` | SiteConfig CDN |
 | `endpoints.ingest` | `string` | `https://ingest.consentify.dev` | Ingest endpoint |
@@ -357,9 +360,9 @@ const consent = await createCloudConsentify({
 
 The SiteConfig comes from two CDN files: `/config/<siteId>/latest.json` (short CDN TTL) names the current hash, and `/config/<siteId>/<hash>.json` is immutable.
 
-- **Browser:** the result is cached in `localStorage` under `consentify_cfg_<siteId>` as `{ t, h, c }` (fetch time, hash, SiteConfig). A fresh entry (younger than `configTtlSec`) is used without any request. A stale entry is used immediately and refreshed in the background; the refresh updates the cache only, so the running instance keeps its policy and the next page load picks up the new one. Revalidation skips the second request when `latest.json` still names the cached hash.
-- **Server (SSR):** the same TTL and stale-while-revalidate rules apply to an in-module cache keyed by `endpoint|siteId`, and concurrent calls share one in-flight request, so renders do not fetch per request.
-- **Offline / CDN outage:** a cached SiteConfig (fresh or stale) keeps working. With no cache, the instance is built from `fallback` and one `console.warn` is logged. The factory does not reject for network or SiteConfig problems; it only rejects with `ConsentifyConfigError` when `fallback.categories` is missing.
+- **Browser:** the result is cached in `localStorage` under `consentify_cfg_<siteId>` as `{ t, h, c }` (fetch time, hash, SiteConfig). A fresh entry (younger than `configTtlSec`) is used without any request. A stale entry (younger than `configMaxStaleSec`) is used immediately and refreshed in the background; the refresh updates the cache only, so the running instance keeps its policy and the next page load picks up the new one. Revalidation skips the second request when `latest.json` still names the cached hash. An entry older than `configMaxStaleSec` is not used: the factory waits for the network as with an empty cache, so a visitor returning long after a policy change does not decide against the old one.
+- **Server (SSR):** the same TTL and stale-while-revalidate rules apply to an in-module cache keyed by `endpoint|siteId`, and concurrent calls share one in-flight request, so renders do not fetch per request. When a fetch fails and there is no usable entry, the failure is remembered for 30 seconds: renders in that window use `fallback` at once instead of each waiting `timeoutMs`.
+- **Offline / CDN outage:** a cached SiteConfig (fresh, or stale within `configMaxStaleSec`) keeps working. With no cache, the instance is built from `fallback` and one `console.warn` is logged. The factory does not reject for network or SiteConfig problems; it only rejects with `ConsentifyConfigError` when `fallback.categories` is missing.
 
 The returned instance exposes the outcome for debugging:
 

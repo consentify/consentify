@@ -331,7 +331,7 @@ consent.on('expiring', (event) => {
 For non-bundled apps (WordPress, static sites), load the IIFE build directly:
 
 ```html
-<script src="https://unpkg.com/@consentify/core/dist/consentify.iife.min.js"></script>
+<script src="https://unpkg.com/@consentify/core@3/dist/consentify.iife.min.js"></script>
 <script>
   var consent = Consentify.createConsentify({
     policy: { categories: ['analytics', 'marketing'] }
@@ -348,7 +348,7 @@ The IIFE bundle is ~4.6kb gzipped and exposes all exports on the `Consentify` gl
 For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~6.3kb gzipped). It exposes the same exports plus `createCloudConsentify`:
 
 ```html
-<script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>
+<script src="https://unpkg.com/@consentify/core@3/dist/consentify-cloud.iife.min.js"></script>
 <script>
   Consentify.createCloudConsentify({
     siteId: 'your-site-id',

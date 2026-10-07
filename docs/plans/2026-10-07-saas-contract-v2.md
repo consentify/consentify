@@ -74,9 +74,9 @@ Both files:
 ### 2.3 How the SDK loads and caches (load model)
 
 - One deadline (`timeoutMs`, default 3000 ms) covers both requests; when it passes, the requests are aborted.
-- Browser: the result is cached in `localStorage` (`consentify_cfg_{siteId}`). For `configTtlSec` (default 3600 s) the cached config is used with no request at all. After that it is used once more as is and revalidated in the background: `GET latest.json`, and the second request only when `current` differs from the cached hash. The running page keeps its config; the next page load uses the new one.
-- Server (SSR): the same rules with an in-process memory cache; concurrent renders share one request.
-- Any failure (network error, timeout, non-2xx, invalid JSON, invalid shape) means: cached config (even an expired one), else the integrator's `fallback`. The SDK does not retry within a page load.
+- Browser: the result is cached in `localStorage` (`consentify_cfg_{siteId}`). For `configTtlSec` (default 3600 s) the cached config is used with no request at all. After that it is used once more as is and revalidated in the background: `GET latest.json`, and the second request only when `current` differs from the cached hash. The running page keeps its config; the next page load uses the new one. An entry older than `configMaxStaleSec` (default 7 days) is not used; the SDK waits for the network as with no cache.
+- Server (SSR): the same rules with an in-process memory cache; concurrent renders share one request. A failed fetch with no usable cached config is remembered for 30 seconds, during which renders use the fallback without a request.
+- Any failure (network error, timeout, non-2xx, invalid JSON, invalid shape) means: cached config (even an expired one, up to `configMaxStaleSec`), else the integrator's `fallback`. The SDK does not retry within a page load.
 
 Expected load: per browser at most one `latest.json` per `configTtlSec`, plus one `{hash}.json` per published change. Worst-case propagation of a publish to a returning visitor: `configTtlSec` + the `latest.json` `max-age` (about 61 minutes with defaults), plus one page load.
 
@@ -121,7 +121,7 @@ The SDK exports these types from `@consentify/core/cloud` (`SiteConfig`, `Vendor
 | `defaultLocale` | `string` | no | Data only | SHOULD be one of `locales` |
 | `vendors` | `Vendor[]` | no | Data only: the SDK attaches no consent logic to vendors | `id` unique per site; `category` one of `categories` or `necessary`; `privacyPolicyUrl` an absolute `https:` URL |
 
-Why a category change needs a new identifier: the SDK keys stored consent by `policyIdentifier` alone. With an unchanged identifier, a record from before a new category was added stays valid, and the new category reads as not granted (in `opt-out` mode too), so the visitor is never asked about it.
+Why a category change needs a new identifier: the SDK keys stored consent by `policyIdentifier` alone. With an unchanged identifier, a record from before a new category was added stays valid, and the new category reads as the mode default (denied in `opt-in`, granted in `opt-out`), so the visitor is never asked about it.
 
 Additional fields are allowed. The SDK passes the whole object through unchanged (cache and `consent.cloud.config`), so new optional fields can be added without changing `v`.
 

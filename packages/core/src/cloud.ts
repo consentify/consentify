@@ -87,6 +87,12 @@ export interface CloudInit {
     timeoutMs?: number;
     /** How long a cached SiteConfig counts as fresh, in seconds. Default `3600`. */
     configTtlSec?: number;
+    /**
+     * Oldest cached SiteConfig still served while it revalidates, in seconds.
+     * An older cache entry is treated like no cache: the factory waits for
+     * the CDN (and uses `fallback` if that fails). Default `604800` (7 days).
+     */
+    configMaxStaleSec?: number;
     cookie?: CreateConsentifyInit<readonly string[]>['cookie'];
     mode?: ConsentMode;
     consentMaxAgeDays?: number;
@@ -135,6 +141,7 @@ export async function createCloudConsentify(
         init.endpoints?.config ?? DEFAULT_CONFIG_ENDPOINT,
         init.timeoutMs ?? 3000,
         (init.configTtlSec ?? 3600) * 1000,
+        (init.configMaxStaleSec ?? 604800) * 1000,
     );
     if (!fetched) logW(`SiteConfig for "${init.siteId}" unavailable, using fallback`);
     const siteCfg: SiteConfig = fetched ?? {

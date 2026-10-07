@@ -357,6 +357,15 @@ export function createConsentify<Cs extends readonly string[]>(
             : record(next, o, docLang);
     };
 
+    // Decode a stored record for the current policy. Its choices go through
+    // `normalize`, so a category added under a fixed `policy.identifier` reads
+    // as the mode default (opt-out: granted), the same value a write fills in.
+    const readRecord = (raw: string | null): Snapshot<T> | null => {
+        const s = raw ? dec<Snapshot<T>>(raw) : null;
+        if (!s || !isValidSnapshot<T>(s) || s.policy !== policyHash || isExpired(s.givenAt)) return null;
+        return { ...s, choices: normalize(s.choices) };
+    };
+
     // --- client-side storage helpers ---
     // Unified localStorage dispatcher: op is 'r'ead / 'w'rite / 'c'lear.
     // Collapses three try/catch blocks and three log messages into one.
@@ -401,18 +410,14 @@ export function createConsentify<Cs extends readonly string[]>(
             raw = readFromStore(k);
             if (raw) break;
         }
-        const s = raw ? dec<Snapshot<T>>(raw) : null;
-        if (!s || !isValidSnapshot<T>(s) || s.policy !== policyHash || isExpired(s.givenAt)) return null;
-        return s;
+        return readRecord(raw);
     };
 
     // ---- server API
     const server = {
         get: (cookieHeader?: string | null): ConsentState<T> => {
-            const raw = cookieHeader ? readCookie(cookieName, cookieHeader) : null;
-            const s = raw ? dec<Snapshot<T>>(raw) : null;
-            if (!s || !isValidSnapshot<T>(s) || s.policy !== policyHash || isExpired(s.givenAt)) return { decision: 'unset' };
-            return { decision: 'decided', snapshot: s };
+            const s = readRecord(cookieHeader ? readCookie(cookieName, cookieHeader) : null);
+            return s ? { decision: 'decided', snapshot: s } : { decision: 'unset' };
         },
         set: (
             choices: Partial<Choices<T>>,

@@ -1,5 +1,0 @@
----
-"@consentify/core": major
----
-
-New consent records use format v2: they have `v: 2`, a random decision `id` (12 hex characters, new for every decision, so the cloud reporter and the ingest can tell apart two decisions made in the same millisecond) and can store the policy text version (`policy.textVersion`, as `pv`), the UI language (`lang` option, per-call `lang`, or `<html lang>` in the browser) and the source (`set`, `acceptAll` and `rejectAll` take `{ source: 'banner' | 'preferences' | 'api' }`, stored as `src`). HMAC proofs sign these fields too, while v1 records and proofs are still read and verified, so upgrading forces no re-consent. Server mode on the flat API is selected by the `cookieHeader` key, so pass it even when there is no cookie (`clear({ cookieHeader })`); an options object without it, such as `{ source: 'banner' }`, is a client write. Client writes are now ignored with a warning outside a browser, where they used to change the instance state shared by every server request.

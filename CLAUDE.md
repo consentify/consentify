@@ -57,7 +57,7 @@ git tag core-v1.0.0 && git push origin core-v1.0.0  # Trigger release
 
 ### Core Package (`packages/core`)
 
-Single-file SDK (`src/index.ts`) built around `createConsentify()` factory. The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use; the `consent.server` and `consent.client` namespaces remain available for explicit access.
+`src/index.ts` is the public entry: it holds the `createConsentify()` factory and re-exports; implementation lives in `src/internal/` (`types`, `util`, `cookie`, `crypto`, `visitor`, `cloud`, `gcm`, `debug`). The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use; the `consent.server` and `consent.client` namespaces remain available for explicit access.
 
 - **Server signatures**: Take/return raw `Cookie` / `Set-Cookie` header strings (Node.js compatible, no DOM)
 - **Client signatures**: Browser-side storage with React `useSyncExternalStore` support via `subscribe()` and `getServerSnapshot()`
@@ -76,10 +76,13 @@ Key design patterns:
 - `expirationWarningDays` + `'expiring'` event - fires when consent is near expiry
 
 ### Internal utilities
-- `fnv1a()` / `stableStringify()` - deterministic policy hashing
-- `readCookie()` / `writeCookie()` - isomorphic cookie handling
-- Listener pattern for React reactivity (`listeners` Set, `syncState`, `notifyListeners`)
-- Event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`
+- `internal/types.ts` - public types and `ConsentifyConfigError`
+- `internal/util.ts` - `fnv1a()` / `stableStringify()` / `hashPolicy()` (deterministic policy hashing), `enc`/`dec`, `isBrowser()`, `isValidSnapshot()`, log helpers
+- `internal/cookie.ts` - `readCookie()` / `writeCookie()` / `buildSetCookieHeader()` (isomorphic cookie handling), exported `parseSetCookie()` for framework cookie setters
+- `internal/crypto.ts` - FNV1a / HMAC-SHA256 proofs, `verifyProof()`
+- `internal/visitor.ts` - visitor ID resolution; `internal/cloud.ts` - cloud-mode config fetch and event reporting
+- `internal/gcm.ts` - `enableConsentMode()`; `internal/debug.ts` - `enableDebug()`
+- In the factory (`src/index.ts`): listener pattern for React reactivity (`listeners` Set, `syncState`, `notifyListeners`) and event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`
 
 ### Common SDK API mistakes to avoid
 - `enableConsentMode(instance, opts)` accepts `{ mapping, waitForUpdate?, sendDefault? }` - there is **no** `defaults:` key. The `gtag('consent','default',...)` command belongs in the HTML `<head>`. Pass `sendDefault: false` so the SDK only sends `update`.
@@ -87,7 +90,7 @@ Key design patterns:
 
 ### SSR Safety
 
-- `isBrowser()` (defined in `src/index.ts`) checks both `window` and `document` — use it for browser-only init
+- `isBrowser()` (defined in `src/internal/util.ts`) checks both `window` and `document` — use it for browser-only init
 - `typeof BroadcastChannel !== 'undefined'` is **not** sufficient alone — Node.js 18+ exposes it natively; always pair with `isBrowser()`
 - Server API is cookie-header only; `client.*` methods are browser-only
 
@@ -125,7 +128,7 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 - Root `vitest.config.ts` globs `packages/*/src/**/*.test.ts` - new workspace packages are auto-discovered, no per-package vitest config needed
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
-- Cloud tests mock `fetch` and `localStorage` via `vi.stubGlobal`
+- Cloud-mode tests (in core's `index.test.ts`) mock `fetch` and `localStorage` via `vi.stubGlobal`
 - Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (IIFE: 5.25kb)
 - Lint enforced via `pnpm lint` (biome, lint-only; `noNonNullAssertion`/`useTemplate`/`noDocumentCookie`/`noConfusingVoidType` deliberately off)
 - Framework guides: `docs/guides/nextjs.md`, `vue.md`, `svelte.md`, `solid.md` — state-wiring recipes, no bundled UI

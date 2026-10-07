@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createConsentify, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, verifyProof, ConsentifyConfigError, type ConsentAdapter, type ConsentifySubscribable, type ConsentState, type ConsentProof, type Snapshot } from './index';
+import { createConsentify, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, verifyProof, parseSetCookie, ConsentifyConfigError, type ConsentAdapter, type ConsentifySubscribable, type ConsentState, type ConsentProof, type Snapshot } from './index';
 
 // Helper to encode a snapshot as document.cookie value
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o));
@@ -1214,6 +1214,45 @@ describe('server API — merge & cookie config', () => {
     it('omits Partitioned by default', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] } });
         expect(c.server.set({ analytics: true })).not.toContain('Partitioned');
+    });
+});
+
+describe('parseSetCookie', () => {
+    const mk = () => createConsentify({
+        policy: { categories: ['analytics'] as const },
+        cookie: { name: 'cc', domain: '.example.com', sameSite: 'Strict', maxAgeSec: 3600, path: '/app' },
+    });
+
+    it('round-trips set() output with custom cookie config', () => {
+        const c = mk();
+        const header = c.set({ analytics: true }, '');
+        const { name, value, options } = parseSetCookie(header);
+        expect(name).toBe('cc');
+        expect(value).toBe(header.slice(3, header.indexOf(';')));
+        expect(options).toEqual({ path: '/app', maxAge: 3600, domain: '.example.com', sameSite: 'strict', secure: true });
+        expect(c.get(`${name}=${value}`).decision).toBe('decided');
+    });
+
+    it('clear() header yields maxAge 0 and an empty value', () => {
+        const { name, value, options } = parseSetCookie(mk().clear(''));
+        expect(name).toBe('cc');
+        expect(value).toBe('');
+        expect(options.maxAge).toBe(0);
+    });
+
+    it('returns the value verbatim (still URI-encoded)', () => {
+        const { value } = parseSetCookie(mk().set({ analytics: false }, ''));
+        expect(value).toMatch(/^%7B/);
+        expect(JSON.parse(decodeURIComponent(value)).choices.analytics).toBe(false);
+    });
+
+    it('parses Partitioned and lowercase attribute names, omitting absent keys', () => {
+        expect(parseSetCookie('a=b; path=/; max-age=10; samesite=None; secure; partitioned')).toEqual({
+            name: 'a',
+            value: 'b',
+            options: { path: '/', maxAge: 10, sameSite: 'none', secure: true, partitioned: true },
+        });
+        expect(parseSetCookie('a=b').options).toEqual({});
     });
 });
 

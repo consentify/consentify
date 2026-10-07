@@ -336,6 +336,76 @@ describe('client API', () => {
     });
 });
 
+describe('client set() re-affirmation', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const givenAt = (s: ConsentState<string>) => (s.decision === 'decided' ? s.snapshot.givenAt : null);
+
+    beforeEach(() => {
+        clearAllCookies();
+        vi.stubGlobal('BroadcastChannel', undefined);
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        clearAllCookies();
+    });
+
+    it('identical choices refresh givenAt, persist it, notify and emit change', () => {
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        c.client.set({ analytics: true });
+        const first = c.client.get();
+
+        vi.setSystemTime(t0 + 60_000);
+        const listener = vi.fn();
+        const handler = vi.fn();
+        c.client.subscribe(listener);
+        c.on('change', handler);
+        c.client.set({ analytics: true });
+        const second = c.client.get();
+
+        expect(givenAt(first)).toBe(new Date(t0).toISOString());
+        expect(givenAt(second)).toBe(new Date(t0 + 60_000).toISOString());
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledOnce();
+        expect(handler.mock.calls[0][0].from).toBe(first);
+        expect(handler.mock.calls[0][0].to).toBe(second);
+        // Written to storage: a fresh instance (page reload) sees the new timestamp.
+        expect(createConsentify({ policy: { categories: ['analytics'] as const } }).client.get()).toEqual(second);
+    });
+
+    it('acceptAll() twice records two decisions', () => {
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const handler = vi.fn();
+        c.on('change', handler);
+        c.acceptAll();
+        vi.setSystemTime(t0 + 1000);
+        c.acceptAll();
+        expect(handler).toHaveBeenCalledTimes(2);
+        expect(givenAt(c.get())).toBe(new Date(t0 + 1000).toISOString());
+    });
+
+    it('identical choices extend expiration when consentMaxAgeDays is set', () => {
+        const opts = { policy: { categories: ['analytics'] as const }, consentMaxAgeDays: 30 };
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        createConsentify(opts).client.set({ analytics: true });
+
+        vi.setSystemTime(t0 + 25 * DAY);
+        createConsentify(opts).client.set({ analytics: true });
+
+        // 31 days after the original decision it would have expired; the
+        // re-affirmation 25 days in restarted the 30-day window.
+        vi.setSystemTime(t0 + 31 * DAY);
+        const reloaded = createConsentify(opts);
+        expect(reloaded.client.get().decision).toBe('decided');
+        expect(reloaded.client.get('analytics')).toBe(true);
+    });
+});
+
 // ============================================================
 // 6. Storage fallback
 // ============================================================
@@ -1628,7 +1698,7 @@ describe('consent mode (opt-in / opt-out)', () => {
 // Expiring event
 // ============================================================
 describe('expiring event', () => {
-    afterEach(() => { clearAllCookies(); vi.unstubAllGlobals(); });
+    afterEach(() => { clearAllCookies(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
     it('fires when consent is within warning window', () => {
         const c = createConsentify({
@@ -1667,7 +1737,9 @@ describe('expiring event', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('fires once per consent cycle, resets after clear and re-consent', () => {
+    it('fires once per givenAt; re-affirmation and clear + re-consent re-arm it', () => {
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
         const c = createConsentify({
             policy: { categories: ['analytics'] as const },
             consentMaxAgeDays: 30,
@@ -1679,14 +1751,15 @@ describe('expiring event', () => {
         c.set({ analytics: true });
         expect(handler).toHaveBeenCalledTimes(1);
 
-        // Same consent cycle - dedup prevents re-emit
-        c.set({ analytics: true });
-        expect(handler).toHaveBeenCalledTimes(1);
-
-        // Clear resets the dedup tracker
-        c.clear();
+        // Re-affirming the same choices is a new decision with a fresh givenAt
+        vi.setSystemTime(t0 + 1000);
         c.set({ analytics: true });
         expect(handler).toHaveBeenCalledTimes(2);
+
+        // Clear resets the dedup tracker, even for an identical givenAt
+        c.clear();
+        c.set({ analytics: true });
+        expect(handler).toHaveBeenCalledTimes(3);
     });
 
     it('payload has correct expiresAt', () => {
@@ -2100,6 +2173,7 @@ describe('Cloud mode (Mode B)', () => {
         globalThis.fetch = originalFetch;
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        vi.useRealTimers();
     });
 
     const stubConfigFetch = (
@@ -2240,29 +2314,48 @@ describe('Cloud mode (Mode B)', () => {
         })).rejects.toThrow(ConsentifyConfigError);
     });
 
-    it('dedupes: same choices set twice only POSTs to ingest once', async () => {
+    const ingestCalls = (spy: ReturnType<typeof vi.fn>) =>
+        spy.mock.calls.filter(([url]) => typeof url === 'string' && url.includes('ingest.test'));
+
+    it('reports a re-affirmation of the same choices as a new event', async () => {
         vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         const c = await createConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         });
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
         c.set({ analytics: true });
-        await vi.waitFor(() => {
-            expect(spy.mock.calls.some(([url]) =>
-                typeof url === 'string' && url.includes('ingest.test'),
-            )).toBe(true);
-        });
-        const firstIngestCount = spy.mock.calls.filter(([url]) =>
-            typeof url === 'string' && url.includes('ingest.test'),
-        ).length;
-        // Same choices - should not re-POST
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+
+        // Same choices later: a new decision with a fresh givenAt -> new POST
+        vi.setSystemTime(t0 + 60_000);
         c.set({ analytics: true });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
+        expect(JSON.parse(ingestCalls(spy)[1][1].body).action).toBe('accept_all');
+    });
+
+    it('does not re-report a decision echoed from another tab', async () => {
+        MockBroadcastChannel.channels.clear();
+        vi.stubGlobal('BroadcastChannel', MockBroadcastChannel);
+        vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const init = {
+            siteId: 'site_abc',
+            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+        };
+        const tab1 = await createConsentify(init);
+        const tab2 = await createConsentify(init);
+        const tab2Change = vi.fn();
+        tab2.on('change', tab2Change);
+
+        tab1.set({ analytics: true });
+        expect(tab2Change).toHaveBeenCalledOnce(); // the echo reached tab2
         await new Promise(r => setTimeout(r, 20));
-        const secondIngestCount = spy.mock.calls.filter(([url]) =>
-            typeof url === 'string' && url.includes('ingest.test'),
-        ).length;
-        expect(secondIngestCount).toBe(firstIngestCount);
+        expect(ingestCalls(spy)).toHaveLength(1);
+        tab1.destroy();
+        tab2.destroy();
     });
 
     it('does not re-report an already-sent decision on the next page load', async () => {

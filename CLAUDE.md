@@ -30,7 +30,7 @@ pnpm e2e
 # Lint (biome, lint-only — no formatter)
 pnpm lint
 
-# Check bundle size (limits in .size-limit.json: core ESM 5kb, core IIFE 4.45kb, cloud ESM 5.5kb, cloud IIFE 6.25kb gzipped)
+# Check bundle size (limits in .size-limit.json: core ESM 5kb, core IIFE 4.65kb, cloud ESM 5.75kb, cloud IIFE 6.5kb gzipped)
 pnpm run size
 ```
 
@@ -107,7 +107,7 @@ Key design patterns:
 - Core (self-hosted only): `dist/consentify.iife.js` and `dist/consentify.iife.min.js`, built from `src/index.ts`
 - Cloud: `dist/consentify-cloud.iife.js` and `dist/consentify-cloud.iife.min.js`, built from `src/cloud-iife.ts` (build-only entry): every core export plus `createCloudConsentify` (not the server-only `reportConsent`). Script-tag users on CMS sites are SaaS customers, so this bundle matters
 - Built via esbuild, both expose their exports on the `Consentify` global
-- Size budgets via `.size-limit.json` (gzipped): core ESM `dist/index.min.js` 5kb, core IIFE `dist/consentify.iife.min.js` 4.45kb, cloud ESM `dist/cloud.min.js` 5.5kb, cloud IIFE `dist/consentify-cloud.iife.min.js` 6.25kb
+- Size budgets via `.size-limit.json` (gzipped): core ESM `dist/index.min.js` 5kb, core IIFE `dist/consentify.iife.min.js` 4.65kb, cloud ESM `dist/cloud.min.js` 5.75kb, cloud IIFE `dist/consentify-cloud.iife.min.js` 6.5kb
 - The npm entries `dist/index.js` / `dist/cloud.js` (+ shared `dist/chunk-*.js`) are **unminified** esbuild output (debuggability, supply-chain reviewability); `dist/index.min.js` and `dist/cloud.min.js` are standalone minified bundles for size tracking and CDN use
 - For non-bundler environments (WordPress, static sites, CMS)
 
@@ -135,7 +135,7 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
 - Cloud-mode tests (in core's `index.test.ts`, importing `createCloudConsentify` from `./cloud`) mock `fetch` and `localStorage` via `vi.stubGlobal`
-- Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (core IIFE 4.45kb, cloud ESM 5.5kb, cloud IIFE 6.25kb)
+- Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (core IIFE 4.65kb, cloud ESM 5.75kb, cloud IIFE 6.5kb)
 - Lint enforced via `pnpm lint` (biome, lint-only; `noNonNullAssertion`/`useTemplate`/`noDocumentCookie`/`noConfusingVoidType` deliberately off)
 - Framework guides: `docs/guides/nextjs.md`, `vue.md`, `svelte.md`, `solid.md` — state-wiring recipes, no bundled UI
 - Privacy/compliance: `docs/guides/cloud-privacy.md` — data collection, storage, and transmission in cloud mode

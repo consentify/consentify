@@ -343,9 +343,9 @@ For non-bundled apps (WordPress, static sites), load the IIFE build directly:
 </script>
 ```
 
-The IIFE bundle is ~4.4kb gzipped and exposes all exports on the `Consentify` global.
+The IIFE bundle is ~4.6kb gzipped and exposes all exports on the `Consentify` global.
 
-For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~6.1kb gzipped). It exposes the same exports plus `createCloudConsentify`:
+For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~6.3kb gzipped). It exposes the same exports plus `createCloudConsentify`:
 
 ```html
 <script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>

@@ -59,8 +59,8 @@ export function CookieBanner() {
         <div role="dialog" aria-label="Cookie consent" class="banner">
           <p>We use cookies to improve your experience.</p>
           <div class="actions">
-            <button onClick={() => consent.acceptAll()}>Accept All</button>
-            <button onClick={() => consent.rejectAll()}>Reject All</button>
+            <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+            <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
           </div>
         </div>
       )}
@@ -143,8 +143,8 @@ export function CookieBanner() {
       {state().decision === 'unset' && (
         <div role="dialog" aria-label="Cookie consent">
           <p>We use cookies to improve your experience.</p>
-          <button onClick={() => consent.acceptAll()}>Accept All</button>
-          <button onClick={() => consent.rejectAll()}>Reject All</button>
+          <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+          <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
         </div>
       )}
     </>
@@ -161,8 +161,8 @@ For SolidStart SSR, read cookies server-side:
 import { consent } from '~/lib/consent';
 
 export async function load({ request }) {
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const state = consent.get(cookieHeader);
+  const cookieHeader = request.headers.get('cookie');
+  const state = consent.get({ cookieHeader });
   return { consentState: state };
 }
 ```

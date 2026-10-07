@@ -30,7 +30,7 @@ pnpm e2e
 # Lint (biome, lint-only — no formatter)
 pnpm lint
 
-# Check bundle size (core ESM < 5kb gzipped, IIFE < 5.25kb)
+# Check bundle size (limits in .size-limit.json: core ESM 5kb, core IIFE 4.65kb, cloud ESM 5.75kb, cloud IIFE 6.5kb gzipped)
 pnpm run size
 ```
 
@@ -57,7 +57,11 @@ git tag core-v1.0.0 && git push origin core-v1.0.0  # Trigger release
 
 ### Core Package (`packages/core`)
 
-Single-file SDK (`src/index.ts`) built around `createConsentify()` factory. The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use; the `consent.server` and `consent.client` namespaces remain available for explicit access.
+Two public entries:
+- `src/index.ts` (`@consentify/core`): the self-hosted `createConsentify()` factory and re-exports. It never imports `internal/cloud`; passing `siteId` is a type error and throws `ConsentifyConfigError` at runtime.
+- `src/cloud.ts` (`@consentify/core/cloud`): `createCloudConsentify()` (async; loads SiteConfig from cache (localStorage `consentify_cfg_<siteId>` in the browser, an in-module memo on the server), the CDN within `timeoutMs`, or the required `fallback`, so it never rejects for network problems; builds the instance via `createConsentify`, exposes the outcome plus `siteId` / `ingest` as `instance.cloud`, starts reporting in the browser), the server-only `reportConsent(consent, { serverKey, setCookie | cookieHeader, visitorId?, timeoutMs? })` for decisions made in server code, plus the `CloudInit` / `CloudFallback` / `CloudInfo` / `SiteConfig` / `Vendor` / `IngestEvent` types. Events are ingest v2 (`POST <ingest>/v2/events`); browser events send `publicKey` as `X-Consentify-Key`, server events send `X-Consentify-Server-Key` and an HMAC `proof` when the instance has a `secret`. The SaaS-facing contract (CDN layout, SiteConfig v2, ingest v2) is `docs/plans/2026-10-07-saas-contract-v2.md`; `sdkVersion` comes from a named import of `package.json` (`resolveJsonModule`, `rootDir: src` in `tsconfig.build.json`).
+
+The ESM build bundles both entries in one esbuild call with `--splitting`, so shared core code lands once in a `dist/chunk-*.js` and `ConsentifyConfigError` stays a single class across entries (never build them as separate self-contained bundles). Implementation lives in `src/internal/` (`types`, `util`, `cookie`, `crypto`, `visitor`, `cloud`, `gcm`, `debug`). The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use: a trailing options object that has a `cookieHeader` key (type `ServerOptions`; the value may be undefined, null or '') switches a call to server mode, e.g. `consent.set(choices, { cookieHeader, source: 'banner' })`. Write calls also take `WriteOptions` (`source`, `lang`) on the client. A write without `source` whose merged choices equal the stored record's is a no-op (the server re-serializes the stored record); with a `source` it is always a new decision. Client writes outside a browser are ignored with a `logW`. New records are consent record v2 (`v`, a random decision `id`, `pv`, `lang`, `src`; see `docs/plans/2026-10-07-consent-record-v2-design.md`); v1 cookies still read. The `consent.server` and `consent.client` namespaces remain available for explicit access.
 
 - **Server signatures**: Take/return raw `Cookie` / `Set-Cookie` header strings (Node.js compatible, no DOM)
 - **Client signatures**: Browser-side storage with React `useSyncExternalStore` support via `subscribe()` and `getServerSnapshot()`
@@ -68,18 +72,21 @@ Key design patterns:
 - Storage abstraction supports cookie (canonical) and localStorage (optional mirror)
 - State uses discriminated union: `{ decision: 'unset' }` | `{ decision: 'decided', snapshot }`
 - Typed event system: `on(type, handler)` / `once(type, handler)` for events `'change' | 'clear' | 'expiring'`; emits after `notifyListeners`. Cross-tab changes (BroadcastChannel) also emit `'change'`/`'clear'`.
-- `guard(category, onGrant, onRevoke?)` - headline integration primitive: runs `onGrant` immediately if consented or once consent is granted, optionally runs `onRevoke` on revocation. Returns a dispose function. Prefer this over hand-rolled `subscribe()` + `isGranted()` loops.
+- `guard(category, onGrant, onRevoke?)` - headline integration primitive: runs `onGrant` immediately if consented or once consent is granted. With `onRevoke` it re-arms after every revoke until disposed; without it, it is one-shot. Returns a dispose function. Prefer this over hand-rolled `subscribe()` + `isGranted()` loops.
 - `enableDebug(instance)` - tree-shakeable debug adapter that logs consent changes via event system
 - `acceptAll()` / `rejectAll()` - convenience methods that set all user categories at once
-- `getProof()` - returns `ConsentProof` with FNV1a signature for audit trails
+- `getProof({ cookieHeader })` - HMAC-SHA256 signed `ConsentProof`; exists only on instances created with a server-only `secret` (no unsigned fallback since v3)
 - `mode: 'opt-in' | 'opt-out'` - GDPR opt-in (deny by default) vs CCPA opt-out (grant by default)
 - `expirationWarningDays` + `'expiring'` event - fires when consent is near expiry
 
 ### Internal utilities
-- `fnv1a()` / `stableStringify()` - deterministic policy hashing
-- `readCookie()` / `writeCookie()` - isomorphic cookie handling
-- Listener pattern for React reactivity (`listeners` Set, `syncState`, `notifyListeners`)
-- Event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`
+- `internal/types.ts` - public types and `ConsentifyConfigError`
+- `internal/util.ts` - `fnv1a()` / `stableStringify()` / `hashPolicy()` (deterministic policy hashing), `enc`/`dec`, `isBrowser()`, `isValidSnapshot()`, log helpers
+- `internal/cookie.ts` - `readCookie()` / `writeCookie()` / `buildSetCookieHeader()` (isomorphic cookie handling), exported `parseSetCookie()` for framework cookie setters
+- `internal/crypto.ts` - HMAC-SHA256 proofs, `verifyProof()`
+- `internal/visitor.ts` - visitor ID resolution; `internal/cloud.ts` - cloud-mode config fetch and event reporting
+- `internal/gcm.ts` - `enableConsentMode()`; `internal/debug.ts` - `enableDebug()`
+- In the factory (`src/index.ts`): listener pattern for React reactivity (`listeners` Set, `syncState`, `notifyListeners`) and event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`
 
 ### Common SDK API mistakes to avoid
 - `enableConsentMode(instance, opts)` accepts `{ mapping, waitForUpdate?, sendDefault? }` - there is **no** `defaults:` key. The `gtag('consent','default',...)` command belongs in the HTML `<head>`. Pass `sendDefault: false` so the SDK only sends `update`.
@@ -87,20 +94,21 @@ Key design patterns:
 
 ### SSR Safety
 
-- `isBrowser()` (defined in `src/index.ts`) checks both `window` and `document` — use it for browser-only init
+- `isBrowser()` (defined in `src/internal/util.ts`) checks both `window` and `document` — use it for browser-only init
 - `typeof BroadcastChannel !== 'undefined'` is **not** sufficient alone — Node.js 18+ exposes it natively; always pair with `isBrowser()`
 - Server API is cookie-header only; `client.*` methods are browser-only
 
 ### Cloud (`packages/cloud`) — DEPRECATED
 
-`@consentify/cloud@2.0.0` is a no-op shell. `enableCloud()` only logs a deprecation warning and returns a no-op disposer. All cloud functionality (event reporting, visitor hash, dedup, retry buffer) lives in `@consentify/core` via `createConsentify({ siteId, apiKey })` (Mode B). The package is kept in the registry only because npm blocks unpublishing packages older than 72 hours.
+`@consentify/cloud@2.0.0` is a no-op shell. `enableCloud()` only logs a deprecation warning and returns a no-op disposer. All cloud functionality (event reporting, visitor hash, dedup, retry buffer) lives in `@consentify/core/cloud` via `createCloudConsentify({ siteId, publicKey, fallback })` (Mode B). The package is kept in the registry only because npm blocks unpublishing packages older than 72 hours.
 
-### IIFE Bundle
+### IIFE Bundles
 
-- Core includes an IIFE build: `dist/consentify.iife.js` and `dist/consentify.iife.min.js`
-- Built via esbuild, exposes all exports on `Consentify` global
-- Size budget via `.size-limit.json`: ESM `packages/core/dist/index.min.js` <5kb gzipped, IIFE `dist/consentify.iife.min.js` <5.25kb gzipped (IIFE wrapper + no tree-shaking costs extra)
-- The npm entry `dist/index.js` is an **unminified** esbuild bundle (debuggability, supply-chain reviewability); `dist/index.min.js` exists for size tracking and CDN use
+- Core (self-hosted only): `dist/consentify.iife.js` and `dist/consentify.iife.min.js`, built from `src/index.ts`
+- Cloud: `dist/consentify-cloud.iife.js` and `dist/consentify-cloud.iife.min.js`, built from `src/cloud-iife.ts` (build-only entry): every core export plus `createCloudConsentify` (not the server-only `reportConsent`). Script-tag users on CMS sites are SaaS customers, so this bundle matters
+- Built via esbuild, both expose their exports on the `Consentify` global
+- Size budgets via `.size-limit.json` (gzipped): core ESM `dist/index.min.js` 5kb, core IIFE `dist/consentify.iife.min.js` 4.65kb, cloud ESM `dist/cloud.min.js` 5.75kb, cloud IIFE `dist/consentify-cloud.iife.min.js` 6.5kb
+- The npm entries `dist/index.js` / `dist/cloud.js` (+ shared `dist/chunk-*.js`) are **unminified** esbuild output (debuggability, supply-chain reviewability); `dist/index.min.js` and `dist/cloud.min.js` are standalone minified bundles for size tracking and CDN use
 - For non-bundler environments (WordPress, static sites, CMS)
 
 ### React Package (`packages/react`)
@@ -116,7 +124,8 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 - Build: `tsup` bundles a single ESM `dist/index.js` with `#!/usr/bin/env node` shebang (deviates from tsc-based pattern because a CLI needs bundled deps for fast `npx`).
 - Entry: `src/index.ts` wires `citty` command -> `src/cli.ts` orchestrator -> `@clack/prompts` wizard -> framework scaffolders -> `execa` install.
 - Templates live in `src/templates/*` (pure template-literal functions); per-framework logic in `src/frameworks/*`.
-- Non-interactive via flags: `--framework`, `--categories`, `--mode`, `--gcm`, `--site-id`, `--api-key`, `--pm`, `--yes`.
+- SaaS output (`--site-id`) imports `createCloudConsentify` from `@consentify/core/cloud` (`sdkImports()` in `templates/consent-config.ts`); vanilla script-tag instructions point to `consentify-cloud.iife.min.js`.
+- Non-interactive via flags: `--framework`, `--categories`, `--mode`, `--gcm`, `--site-id`, `--public-key`, `--pm`, `--yes` (the removed `--api-key` fails with a rename hint).
 - Never auto-edits existing files - only creates new files and prints wiring instructions.
 
 ### Testing
@@ -125,8 +134,8 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 - Root `vitest.config.ts` globs `packages/*/src/**/*.test.ts` - new workspace packages are auto-discovered, no per-package vitest config needed
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
-- Cloud tests mock `fetch` and `localStorage` via `vi.stubGlobal`
-- Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (IIFE: 5.25kb)
+- Cloud-mode tests (in core's `index.test.ts`, importing `createCloudConsentify` from `./cloud`) mock `fetch` and `localStorage` via `vi.stubGlobal`
+- Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (core IIFE 4.65kb, cloud ESM 5.75kb, cloud IIFE 6.5kb)
 - Lint enforced via `pnpm lint` (biome, lint-only; `noNonNullAssertion`/`useTemplate`/`noDocumentCookie`/`noConfusingVoidType` deliberately off)
 - Framework guides: `docs/guides/nextjs.md`, `vue.md`, `svelte.md`, `solid.md` — state-wiring recipes, no bundled UI
 - Privacy/compliance: `docs/guides/cloud-privacy.md` — data collection, storage, and transmission in cloud mode

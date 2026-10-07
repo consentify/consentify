@@ -6,13 +6,47 @@ export type CookieOpt = {
     secure: boolean;
     path: string;
     domain?: string;
+    partitioned?: boolean;
 };
 
 export function buildSetCookieHeader(name: string, value: string, opt: CookieOpt): string {
     let h = `${name}=${value}; Path=${opt.path}; Max-Age=${opt.maxAgeSec}; SameSite=${opt.sameSite}`;
     if (opt.domain) h += `; Domain=${opt.domain}`;
     if (opt.secure) h += `; Secure`;
+    if (opt.partitioned) h += `; Partitioned`;
     return h;
+}
+
+/**
+ * Splits a `Set-Cookie` header returned by the server API (`set`, `clear`,
+ * `acceptAll`, `rejectAll`) into `name`, `value` and an `options` object shaped
+ * for framework cookie setters (lowercase `sameSite`, `maxAge` in seconds), so
+ * the instance's cookie config is applied instead of being re-typed by hand.
+ * `value` is URI-decoded, ready for setters that encode values themselves
+ * (Next.js, SvelteKit). Express `res.cookie()` takes `maxAge` in
+ * milliseconds: `res.cookie(name, value, { ...options, maxAge: options.maxAge! * 1000 })`.
+ * Written for the SDK's own output (Path, Max-Age, Domain, SameSite, Secure, Partitioned);
+ * kept minimal for bundle size, so other attributes pass through under their
+ * lowercased name and values containing `=` are not supported.
+ *
+ * @example Next.js Server Action
+ * const { name, value, options } = parseSetCookie(consent.acceptAll({ cookieHeader: cookieStore.toString() }));
+ * cookieStore.set(name, value, options);
+ */
+export function parseSetCookie(header: string): {
+    name: string;
+    value: string;
+    options: { path?: string; maxAge?: number; domain?: string; sameSite?: 'lax' | 'strict' | 'none'; secure?: boolean; partitioned?: boolean };
+} {
+    const [[name, value], ...attrs] = header.split(/; */).map(p => p.split('='));
+    const options: Record<string, unknown> = {};
+    for (let [k, v] of attrs) {
+        k = k.toLowerCase();
+        if (k === 'max-age') options.maxAge = +v;
+        else if (k === 'samesite') options.sameSite = v.toLowerCase();
+        else options[k] = v ?? true;
+    }
+    return { name, value: decodeURIComponent(value), options };
 }
 
 export function readCookie(name: string, cookieStr?: string): string | null {

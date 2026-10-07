@@ -38,8 +38,8 @@ function CookieBanner() {
   return (
     <div className="cookie-banner">
       <p>We use cookies to enhance your experience.</p>
-      <button onClick={() => consent.acceptAll()}>Accept All</button>
-      <button onClick={() => consent.rejectAll()}>Essential Only</button>
+      <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button onClick={() => consent.rejectAll({ source: 'banner' })}>Essential Only</button>
     </div>
   );
 }
@@ -89,12 +89,7 @@ function ExpirationWarning() {
 
 ### Consent Proof
 
-Get a tamper-evident consent receipt for compliance:
-
-```tsx
-const proof = consent.getProof();
-// { policy, givenAt, choices, signature } or null
-```
+Signed consent receipts are server-only: create a separate instance with a `secret` in server code and call `await consent.getProof({ cookieHeader })`. The browser instance used with this hook has no `getProof`. See [Consent Proof](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md#consent-proof-audit-trail) in the API reference.
 
 ### Re-exports
 

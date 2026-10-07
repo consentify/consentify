@@ -10,7 +10,7 @@ export interface ParsedFlags {
     enableGcm?: boolean;
     useSaas?: boolean;
     siteId?: string;
-    apiKey?: string;
+    publicKey?: string;
     packageManager?: PackageManager;
     cwd?: string;
     yes?: boolean;
@@ -22,7 +22,9 @@ export interface FlagInput {
     mode?: string;
     gcm?: boolean;
     'site-id'?: string;
-    'api-key'?: string;
+    'public-key'?: string;
+    /** Removed (renamed to `--public-key`); still parsed so the error can say so. */
+    'api-key'?: unknown;
     pm?: string;
     cwd?: string;
     yes?: boolean;
@@ -65,7 +67,10 @@ export function normalizeFlags(raw: FlagInput): ParsedFlags {
         out.useSaas = true;
     }
     if (raw['api-key'] !== undefined) {
-        out.apiKey = raw['api-key'];
+        throw new Error(`--api-key was renamed to --public-key.`);
+    }
+    if (raw['public-key'] !== undefined) {
+        out.publicKey = raw['public-key'];
         out.useSaas = true;
     }
 
@@ -120,9 +125,9 @@ export const command = defineCommand({
             type: 'string',
             description: 'Consentify dashboard Site ID (enables SaaS mode).',
         },
-        'api-key': {
+        'public-key': {
             type: 'string',
-            description: 'Consentify dashboard API key (optional).',
+            description: 'Consentify dashboard public key (optional; sent with browser events).',
         },
         pm: {
             type: 'string',

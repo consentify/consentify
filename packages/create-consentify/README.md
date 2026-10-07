@@ -17,7 +17,7 @@ Interactive wizard that:
 1. Asks you which framework you're using.
 2. Picks consent categories, mode (opt-in / opt-out), and optional Google Consent Mode v2 wiring.
 3. Optionally connects to the Consentify dashboard (analytics, visual editor).
-4. Installs `@consentify/core` (+ `@consentify/react` when relevant). Cloud reporting now lives in `@consentify/core` itself via `createConsentify({ siteId })`, so no separate cloud package is added.
+4. Installs `@consentify/core` (+ `@consentify/react` when relevant). Cloud reporting lives in `@consentify/core` itself via `createCloudConsentify({ siteId })` from the `@consentify/core/cloud` subpath, so no separate cloud package is added.
 5. Writes a `lib/consent.ts` and a provider component for your framework.
 6. Prints the exact snippet to paste into your root layout / entry file.
 
@@ -41,7 +41,7 @@ npx create-consentify@latest \
   --mode opt-in \
   --gcm \
   --site-id site_xxx \
-  --api-key sk_xxx \
+  --public-key pk_xxx \
   --pm pnpm \
   --yes
 ```
@@ -55,7 +55,7 @@ All flags are optional; any missing flag triggers a prompt (unless `--yes` is se
 | `--mode`       | `opt-in` (GDPR, default) \| `opt-out` (CCPA)                       |
 | `--gcm`        | Enable Google Consent Mode v2 wiring                               |
 | `--site-id`    | Consentify dashboard Site ID (implies SaaS mode)                   |
-| `--api-key`    | Dashboard API key (optional)                                       |
+| `--public-key` | Dashboard public key (optional; renamed from `--api-key`)          |
 | `--pm`         | `pnpm` \| `npm` \| `yarn` \| `bun`                                 |
 | `--cwd`        | Target project directory (default: `process.cwd()`)                |
 | `--yes`        | Skip prompts when required flags are provided                      |

@@ -88,16 +88,18 @@ const dispose = consent.guard(
 dispose();
 ```
 
+With `onRevoke`, the guard re-arms after each revoke: a later re-grant calls `onGrant` again, the next revoke calls `onRevoke` again, until you call `dispose()`. Without `onRevoke`, `onGrant` runs once and the guard stops watching.
+
 ```ts
 // Your cookie banner UI (framework-agnostic)
 import { consent } from './lib/consent';
 
 document.getElementById('accept-all')?.addEventListener('click', () => {
-  consent.acceptAll();
+  consent.acceptAll({ source: 'banner' });
 });
 
 document.getElementById('reject-all')?.addEventListener('click', () => {
-  consent.rejectAll();
+  consent.rejectAll({ source: 'banner' });
 });
 
 document.getElementById('reset')?.addEventListener('click', () => {
@@ -105,6 +107,8 @@ document.getElementById('reset')?.addEventListener('click', () => {
   window.location.reload();
 });
 ```
+
+Pass a `source` (`'banner'` or `'preferences'`) from consent UI buttons: such a write always records a new decision, even when the choices are unchanged. A write without a `source` that leaves the stored choices as they are, such as restoring saved choices on every page load, is a no-op: it does not extend consent, notify subscribers or report an event.
 
 ## React Integration
 
@@ -134,8 +138,8 @@ export function CookieBanner() {
   return (
     <div role="dialog" aria-label="Cookie consent">
       <p>We use cookies to improve your experience.</p>
-      <button onClick={() => consent.acceptAll()}>Accept All</button>
-      <button onClick={() => consent.rejectAll()}>Reject All</button>
+      <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
     </div>
   );
 }
@@ -156,7 +160,7 @@ import { Analytics } from '../components/Analytics';
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
-  const state = consent.get(cookieStore.toString());
+  const state = consent.get({ cookieHeader: cookieStore.toString() });
 
   return (
     <html>
@@ -177,8 +181,7 @@ import { consent } from '../../../lib/consent';
 
 export async function POST(request: Request) {
   const { choices } = await request.json();
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const setCookie = consent.set(choices, cookieHeader);
+  const setCookie = consent.set(choices, { cookieHeader: request.headers.get('cookie') });
 
   const res = NextResponse.json({ ok: true });
   res.headers.append('Set-Cookie', setCookie);
@@ -186,7 +189,7 @@ export async function POST(request: Request) {
 }
 ```
 
-`getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
+Passing an options object with a `cookieHeader` key (`{ cookieHeader }`) switches `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` to server mode; an `undefined`, empty or `null` header means no consent yet. Objects without that key, like `{ source: 'banner' }`, stay client-side. Client-side writes on a server are ignored with a warning, since a module-level instance is shared by every request. `getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
 
 ## Google Consent Mode v2
 
@@ -209,7 +212,7 @@ See [Google Consent Mode v2 in the API reference](./docs/guides/api-reference.md
 
 ## Full API Reference
 
-The primary APIs above cover most integrations. For tables, the `server` / `client` namespaces, typed events, `getProof` details, custom adapters, cloud reporting, IIFE + CSP/SRI guidance, and everything else, see:
+The primary APIs above cover most integrations. For tables, the `server` / `client` namespaces, typed events, signed proofs (`getProof`, server-only), custom adapters, cloud reporting, IIFE + CSP/SRI guidance, and everything else, see:
 
 - **[API Reference](./docs/guides/api-reference.md)** — every method, option, and type
 - **[Next.js Guide](./docs/guides/nextjs.md)** — App Router, Server Components, Route Handlers
@@ -221,10 +224,10 @@ The primary APIs above cover most integrations. For tables, the `server` / `clie
 
 | Package | Description |
 |---------|-------------|
-| [@consentify/core](./packages/core) | Headless consent SDK — TypeScript-first, SSR-safe, zero dependencies. Includes built-in Consentify Dev mode (`createConsentify({ siteId })`, hosted platform not live yet). |
+| [@consentify/core](./packages/core) | Headless consent SDK — TypeScript-first, SSR-safe, zero dependencies. Includes built-in Consentify Dev mode via the `@consentify/core/cloud` subpath (`createCloudConsentify({ siteId })`, hosted platform not live yet). |
 | [@consentify/react](./packages/react) | React hook for `@consentify/core` |
 | [create-consentify](./packages/create-consentify) | `npx` scaffolder — wires the SDK into Next.js, Vite, Remix, Astro, or vanilla projects |
-| ~~[@consentify/cloud](./packages/cloud)~~ | **Deprecated (v2.0.0, no-op shell).** Cloud functionality moved into `@consentify/core`. |
+| ~~[@consentify/cloud](./packages/cloud)~~ | **Deprecated (v2.0.0, no-op shell).** Cloud functionality moved into `@consentify/core/cloud`. |
 
 ## How it compares
 
@@ -249,9 +252,9 @@ The closest project in spirit is **c15t** — also headless and TypeScript-based
 
 ## Coming Soon: Consentify Dev
 
-A hosted consent management platform — the tool developers and marketers use to configure policies, translate banners, and watch opt-in rates. It pairs with this SDK via `createConsentify({ siteId })`.
+A hosted consent management platform — the tool developers and marketers use to configure policies, translate banners, and watch opt-in rates. It pairs with this SDK via `createCloudConsentify({ siteId })` from `@consentify/core/cloud`.
 
-> **Not live yet.** Until launch, `createConsentify({ siteId })` will fail against the default endpoints — use self-hosted mode (`policy`) today.
+> **Not live yet.** Until launch, `createCloudConsentify({ siteId, fallback })` cannot fetch a SiteConfig from the default endpoints and runs on its local `fallback` policy — use self-hosted mode (`createConsentify({ policy })`) today.
 
 - **Visual banner builder** — drag-and-drop consent UI
 - **Consent analytics dashboard** — see opt-in/out rates

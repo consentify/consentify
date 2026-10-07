@@ -59,8 +59,8 @@ export const consent = createConsentify({
   <div v-if="state.decision === 'unset'" role="dialog" aria-label="Cookie consent" class="banner">
     <p>We use cookies to improve your experience.</p>
     <div class="actions">
-      <button @click="consent.acceptAll()">Accept All</button>
-      <button @click="consent.rejectAll()">Reject All</button>
+      <button @click="consent.acceptAll({ source: 'banner' })">Accept All</button>
+      <button @click="consent.rejectAll({ source: 'banner' })">Reject All</button>
     </div>
   </div>
 </template>
@@ -125,8 +125,8 @@ For Nuxt SSR, initialize state client-side and use the server API for reading co
 ```ts
 // middleware/consent.ts (Nuxt)
 export default defineEventHandler(async (event) => {
-  const cookieHeader = getHeader(event, 'cookie') ?? '';
-  const state = consent.get(cookieHeader);
+  const cookieHeader = getHeader(event, 'cookie');
+  const state = consent.get({ cookieHeader });
   event.node.res.setHeader('x-consent-decided', state.decision);
 });
 ```

@@ -1,5 +1,5 @@
 import type { ConsentProof, Snapshot, UserCategory } from './types';
-import { fnv1a, stableStringify, toHex } from './util';
+import { stableStringify, toHex } from './util';
 
 export async function hmacSign(secret: string, payload: string): Promise<string> {
     const enc = new TextEncoder();
@@ -12,17 +12,15 @@ export async function hmacSign(secret: string, payload: string): Promise<string>
     return toHex(sig);
 }
 
-// Canonical body picked by both proof builders and `verifyProof`. Keep the key
-// order stable — `stableStringify` re-sorts, but keeping the source consistent
-// makes intent obvious.
-const proofBody = <T extends UserCategory>(s: Pick<Snapshot<T>, 'policy' | 'givenAt' | 'choices'>) =>
-    ({ policy: s.policy, givenAt: s.givenAt, choices: s.choices });
-
-/** Deprecated FNV1a proof (forgeable). Used only when no `secret` is supplied. */
-export function buildProofFnv1a<T extends UserCategory>(snapshot: Snapshot<T>): ConsentProof<T> {
-    const body = proofBody(snapshot);
-    return { ...body, signature: fnv1a(stableStringify(body)) };
-}
+// Canonical body shared by `buildProofHmac` and `verifyProof`: the v1 fields
+// plus the v2 record fields (`id`, `v`, `pv`, `lang`, `src`). Absent (or null) fields are left out, so proofs
+// of v1 records keep the v1 body and still verify. Other keys (e.g. extra
+// columns on a stored proof) are never signed. `stableStringify` sorts keys.
+const proofBody = <T extends UserCategory>(s: Snapshot<T>): Snapshot<T> => {
+    const b: Record<string, unknown> = {};
+    for (const k of ['policy', 'givenAt', 'choices', 'id', 'v', 'pv', 'lang', 'src'] as const) if (s[k] != null) b[k] = s[k];
+    return b as unknown as Snapshot<T>;
+};
 
 /** HMAC-SHA256 signed proof. Requires `secret`. */
 export async function buildProofHmac<T extends UserCategory>(
@@ -36,9 +34,9 @@ export async function buildProofHmac<T extends UserCategory>(
 
 /**
  * Verifies an HMAC-SHA256-signed `ConsentProof`. Re-computes the signature
- * from `{policy, givenAt, choices}` using `secret` and compares to
+ * from `{policy, givenAt, choices}` plus `id`, `v`, `pv`, `lang` and `src`
+ * when present, using `secret`, and compares to
  * `proof.signature`. Returns `false` on mismatch or on any crypto error.
- * FNV1a proofs (the deprecated fallback) will not verify here.
  */
 export async function verifyProof<T extends UserCategory>(
     proof: ConsentProof<T>,

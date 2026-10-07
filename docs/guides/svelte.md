@@ -45,8 +45,8 @@ export const consentState = readable(consent.get(), (set) => {
   <div role="dialog" aria-label="Cookie consent" class="banner">
     <p>We use cookies to improve your experience.</p>
     <div class="actions">
-      <button on:click={() => consent.acceptAll()}>Accept All</button>
-      <button on:click={() => consent.rejectAll()}>Reject All</button>
+      <button on:click={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button on:click={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
     </div>
   </div>
 {/if}
@@ -107,8 +107,8 @@ For SvelteKit SSR, initialize the consent state server-side via the server API:
 import { consent } from '$lib/consent';
 
 export async function load({ request }) {
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const state = consent.get(cookieHeader);
+  const cookieHeader = request.headers.get('cookie');
+  const state = consent.get({ cookieHeader });
   return { consentState: state };
 }
 ```

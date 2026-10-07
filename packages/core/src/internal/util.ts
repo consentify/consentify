@@ -29,6 +29,18 @@ export const canLocalStorage = (): boolean => {
 export const toHex = (buf: ArrayBuffer): string =>
     Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
 
+/**
+ * `bytes` random bytes as lowercase hex (record ids, one-off visitor tokens).
+ * Web Crypto when available; otherwise `Math.random`, which is not
+ * cryptographic but fine for these non-secret ids.
+ */
+export const randomHex = (bytes: number): string => {
+    const b = new Uint8Array(bytes);
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(b);
+    else for (let i = 0; i < bytes; i++) b[i] = Math.random() * 256;
+    return toHex(b.buffer);
+};
+
 /** @internal */
 export function stableStringify(o: unknown): string {
     if (o === null || typeof o !== 'object') return JSON.stringify(o);
@@ -54,6 +66,10 @@ export function hashPolicy(categories: readonly string[], identifier?: string): 
     return fnv1a(stableStringify({ categories: [...categories].sort(), identifier: identifier ?? null}));
 }
 
+/** `ConsentSource` values a write stores. */
+export const SOURCES: readonly unknown[] = ['banner', 'preferences', 'api'];
+
+// Accepts v1 records (no `v`) and v2 records (`v: 2`, optional string `id` and metadata).
 export function isValidSnapshot<T extends UserCategory>(s: unknown): s is Snapshot<T> {
     if (
         typeof s !== 'object' || s === null ||
@@ -62,6 +78,11 @@ export function isValidSnapshot<T extends UserCategory>(s: unknown): s is Snapsh
         typeof (s as { choices?: unknown }).choices !== 'object' || (s as { choices: unknown }).choices === null
     ) return false;
     if (Number.isNaN(Date.parse((s as { givenAt: string }).givenAt))) return false;
+    const r = s as Record<string, unknown>;
+    if (r.v !== undefined && r.v !== 2) return false;
+    // Any string `src` is read, so a source added by a later 3.x minor does not
+    // unset the record here; writes still drop unknown sources (`SOURCES`).
+    if ([r.id, r.pv, r.lang, r.src].some(x => x !== undefined && typeof x !== 'string')) return false;
     const choices = (s as { choices: Record<string, unknown> }).choices;
     for (const k in choices) {
         if (typeof choices[k] !== 'boolean') return false;

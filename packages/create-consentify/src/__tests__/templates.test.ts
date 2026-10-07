@@ -25,6 +25,7 @@ describe('generateConsentConfig', () => {
         expect(out).not.toContain(`enableCloud`);
         expect(out).toContain(`mode: 'opt-in'`);
         expect(out).toContain(`categories: ['analytics', 'marketing']`);
+        expect(out).not.toContain(`@consentify/core/cloud`);
     });
 
     it('emits opt-out when selected', () => {
@@ -44,14 +45,24 @@ describe('generateConsentConfig', () => {
         expect(out).not.toMatch(/defaults\s*:/);
     });
 
-    it('wires SaaS via Mode B with Next.js-style env prefix', () => {
+    it('wires SaaS via @consentify/core/cloud with Next.js-style env prefix', () => {
         const out = generateConsentConfig(ctx({ useSaas: true, siteId: 'site_abc' }));
         expect(out).not.toContain(`@consentify/cloud`);
         expect(out).not.toContain(`enableCloud`);
-        expect(out).toContain(`import { createConsentify } from '@consentify/core';`);
-        expect(out).toContain(`await createConsentify({`);
+        expect(out).toContain(`import { createCloudConsentify } from '@consentify/core/cloud';`);
+        expect(out).not.toContain(`from '@consentify/core';`);
+        expect(out).toContain(`await createCloudConsentify({`);
+        expect(out).not.toContain(`createConsentify(`);
         expect(out).toContain(`siteId: process.env.NEXT_PUBLIC_CONSENTIFY_SITE_ID!`);
-        expect(out).toContain(`apiKey: process.env.NEXT_PUBLIC_CONSENTIFY_API_KEY`);
+        expect(out).toContain(`publicKey: process.env.NEXT_PUBLIC_CONSENTIFY_PUBLIC_KEY`);
+        expect(out).not.toContain(`apiKey`);
+    });
+
+    it('imports enableConsentMode from core alongside the cloud factory', () => {
+        const out = generateConsentConfig(ctx({ useSaas: true, enableGcm: true }));
+        expect(out).toContain(`import { enableConsentMode } from '@consentify/core';`);
+        expect(out).toContain(`import { createCloudConsentify } from '@consentify/core/cloud';`);
+        expect(out).toContain(`enableConsentMode(consent, {`);
     });
 
     it('uses VITE_ prefix for vite-react', () => {
@@ -64,9 +75,13 @@ describe('generateConsentConfig', () => {
         expect(out).toContain(`process.env.PUBLIC_CONSENTIFY_SITE_ID!`);
     });
 
-    it('omits categories literal in SaaS mode (fetched from SiteConfig)', () => {
-        const out = generateConsentConfig(ctx({ useSaas: true }));
-        expect(out).not.toContain(`categories:`);
+    it('emits the required fallback from the picked categories and mode in SaaS mode', () => {
+        const out = generateConsentConfig(ctx({ useSaas: true, mode: 'opt-out', categories: ['analytics'] }));
+        expect(out).toContain(`fallback: {\n        categories: ['analytics'],\n        mode: 'opt-out',\n`);
+        expect(out).toContain(`// identifier: 'your-policy-identifier'`);
+        // Categories appear only in the fallback; the live ones come from SiteConfig.
+        expect(out.match(/categories:/g)).toHaveLength(1);
+        expect(out).not.toContain(`policy:`);
     });
 
     it('uses bare CONSENTIFY_SITE_ID (no prefix) for remix', () => {
@@ -103,12 +118,28 @@ describe('generateVanillaConfig', () => {
         }));
         expect(out).toContain(`siteId: 'site_xyz'`);
         expect(out).not.toContain(`process.env`);
+        expect(out).toContain(`import { createCloudConsentify } from '@consentify/core/cloud';`);
+        expect(out).toContain(`await createCloudConsentify({`);
+        expect(out).not.toContain(`createConsentify(`);
+        expect(out).toContain(`fallback: {\n        categories: ['analytics', 'marketing'],\n        mode: 'opt-in',\n`);
+    });
+
+    it('imports createConsentify from core when self-hosted', () => {
+        const out = generateVanillaConfig(ctx({ framework: 'vanilla', enableGcm: true }));
+        expect(out).toContain(`import { createConsentify, enableConsentMode } from '@consentify/core';`);
+        expect(out).not.toContain(`@consentify/core/cloud`);
     });
 
     it('checks decision against unset, not pending', () => {
         const out = generateVanillaConfig(ctx({ framework: 'vanilla' }));
         expect(out).toContain("state.decision === 'unset'");
         expect(out).not.toContain("'pending'");
+    });
+
+    it.each([false, true])('shows banner buttons calling acceptAll / rejectAll with a banner source (saas=%s)', (useSaas) => {
+        const out = generateVanillaConfig(ctx({ framework: 'vanilla', useSaas }));
+        expect(out).toContain(`consent.acceptAll({ source: 'banner' })`);
+        expect(out).toContain(`consent.rejectAll({ source: 'banner' })`);
     });
 
     it('tells enableConsentMode not to repeat the head default', () => {
@@ -126,9 +157,10 @@ describe('generateEnvExample', () => {
     });
 
     it('emits Next.js-style keys when SaaS enabled', () => {
-        const out = generateEnvExample(ctx({ useSaas: true, siteId: 'abc', apiKey: 'sk_1' }));
+        const out = generateEnvExample(ctx({ useSaas: true, siteId: 'abc', publicKey: 'pk_1' }));
         expect(out).toContain('NEXT_PUBLIC_CONSENTIFY_SITE_ID=abc');
-        expect(out).toContain('NEXT_PUBLIC_CONSENTIFY_API_KEY=sk_1');
+        expect(out).toContain('NEXT_PUBLIC_CONSENTIFY_PUBLIC_KEY=pk_1');
+        expect(out).not.toContain('API_KEY');
     });
 
     it('emits bare keys for remix (no env prefix)', () => {

@@ -52,7 +52,7 @@ import { CookieBanner } from '../components/CookieBanner';
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
-  const state = consent.get(cookieStore.toString());
+  const state = consent.get({ cookieHeader: cookieStore.toString() });
 
   return (
     <html>
@@ -68,7 +68,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 }
 ```
 
-`consent.get(cookieHeader)` delegates to the server API - no browser globals needed.
+Passing `{ cookieHeader }` switches `consent.get` to the server API - no browser globals needed. The same options object works for `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll`.
 
 ## 3. Cookie banner (client component)
 
@@ -88,10 +88,10 @@ export function CookieBanner() {
     <div role="dialog" aria-label="Cookie consent" className="fixed bottom-0 inset-x-0 p-4 bg-white shadow-lg">
       <p>We use cookies to improve your experience.</p>
       <div className="flex gap-2 mt-2">
-        <button onClick={() => consent.set({ analytics: true, marketing: true })}>
+        <button onClick={() => consent.set({ analytics: true, marketing: true }, { source: 'banner' })}>
           Accept All
         </button>
-        <button onClick={() => consent.set({ analytics: false, marketing: false })}>
+        <button onClick={() => consent.set({ analytics: false, marketing: false }, { source: 'banner' })}>
           Reject All
         </button>
       </div>
@@ -145,21 +145,18 @@ Alternative to an API route - use a Server Action to set the consent cookie:
 'use server';
 
 import { cookies } from 'next/headers';
+import { parseSetCookie } from '@consentify/core';
 import { consent } from '../lib/consent';
 
 export async function setConsent(choices: Record<string, boolean>) {
   const cookieStore = await cookies();
-  const setCookieHeader = consent.set(choices, cookieStore.toString());
+  const header = consent.set(choices, { cookieHeader: cookieStore.toString() });
 
-  // Parse the Set-Cookie header and apply it
-  const [nameValue] = setCookieHeader.split(';');
-  const [name, value] = nameValue.split('=');
-  cookieStore.set(name, value, {
-    path: '/',
-    maxAge: 60 * 60 * 24 * 365,
-    sameSite: 'lax',
-    secure: true,
-  });
+  // Apply the Set-Cookie header with the instance's own cookie config
+  // (name, path, domain, Max-Age, SameSite, Secure). `value` is URI-encoded
+  // and Next.js encodes values again, so decode it first.
+  const { name, value, options } = parseSetCookie(header);
+  cookieStore.set(name, value, options);
 }
 ```
 
@@ -175,8 +172,8 @@ export function CookieBanner() {
   return (
     <div role="dialog" aria-label="Cookie consent">
       <button onClick={() => {
-        consent.set({ analytics: true, marketing: true }); // client-side update
-        setConsent({ analytics: true, marketing: true });   // server-side cookie
+        consent.set({ analytics: true, marketing: true }, { source: 'banner' }); // client-side update
+        setConsent({ analytics: true, marketing: true }); // server-side cookie
       }}>
         Accept All
       </button>
@@ -185,7 +182,7 @@ export function CookieBanner() {
 }
 ```
 
-In most cases, the client-side `consent.set()` is sufficient - it writes the cookie directly. The Server Action approach is useful when you need server-side validation or logging.
+In most cases, the client-side `consent.set()` is sufficient - it writes the cookie directly. The Server Action approach is useful when you need server-side validation or logging. Here the action receives the cookie the client just wrote; since its call has no `source` and the choices are the same, it re-serializes that record instead of recording a second decision.
 
 ## 6. Load scripts with guard()
 
@@ -248,8 +245,7 @@ import type { NextRequest } from 'next/server';
 import { consent } from './lib/consent';
 
 export function middleware(request: NextRequest) {
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const state = consent.get(cookieHeader);
+  const state = consent.get({ cookieHeader: request.headers.get('cookie') });
 
   const response = NextResponse.next();
 
@@ -317,8 +313,8 @@ export function CookieBanner() {
   return (
     <div role="dialog" aria-label="Cookie consent">
       <p>We use cookies to improve your experience.</p>
-      <button onClick={() => consent.acceptAll()}>Accept All</button>
-      <button onClick={() => consent.rejectAll()}>Reject All</button>
+      <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
     </div>
   );
 }
@@ -331,15 +327,14 @@ Server-side version (Server Actions):
 'use server';
 
 import { cookies } from 'next/headers';
+import { parseSetCookie } from '@consentify/core';
 import { consent } from '../lib/consent';
 
 export async function acceptAllConsent() {
   const cookieStore = await cookies();
-  const header = consent.acceptAll(cookieStore.toString());
-  // Parse and set the cookie from the Set-Cookie header
-  const [nameValue] = header.split(';');
-  const [name, value] = nameValue.split('=');
-  cookieStore.set(name, value, { path: '/', maxAge: 60 * 60 * 24 * 365, sameSite: 'lax', secure: true });
+  const header = consent.acceptAll({ cookieHeader: cookieStore.toString(), source: 'banner' });
+  const { name, value, options } = parseSetCookie(header);
+  cookieStore.set(name, value, options);
 }
 ```
 
@@ -362,7 +357,29 @@ export const consent = createConsentify({
 
 ## 11. Consent Proof for Compliance
 
-Record tamper-evident consent receipts:
+Record tamper-evident consent receipts. Proofs are HMAC-signed with a server secret, so they are built on the server from the consent cookie; the browser instance has no `getProof`.
+
+```ts
+// lib/consent-signing.ts - import from server code only
+import { createConsentify } from '@consentify/core';
+
+// Same policy as lib/consent.ts, so the policy hash matches the cookie.
+export const signingConsent = createConsentify({
+  policy: { categories: ['analytics', 'marketing'] as const },
+  secret: process.env.CONSENT_SIGNING_SECRET!, // throws if this runs in a browser
+});
+```
+
+```ts
+// app/api/compliance/route.ts
+import { signingConsent } from '../../../lib/consent-signing';
+
+export async function POST(request: Request) {
+  const proof = await signingConsent.getProof({ cookieHeader: request.headers.get('cookie') });
+  if (proof) await db.consentProofs.insert(proof); // verify later with verifyProof(proof, secret)
+  return new Response(null, { status: 204 });
+}
+```
 
 ```tsx
 'use client';
@@ -371,18 +388,8 @@ import { useEffect } from 'react';
 import { consent } from '../lib/consent';
 
 export function ComplianceRecorder() {
-  useEffect(() => {
-    return consent.on('change', () => {
-      const proof = consent.getProof();
-      if (proof) {
-        fetch('/api/compliance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(proof),
-        });
-      }
-    });
-  }, []);
+  // The consent cookie travels with the request; the server signs what it reads.
+  useEffect(() => consent.on('change', () => { fetch('/api/compliance', { method: 'POST' }); }), []);
   return null;
 }
 ```
@@ -409,7 +416,7 @@ export function ExpirationWarning() {
   return (
     <div role="alert">
       <p>Your consent expires in {days} days.</p>
-      <button onClick={() => { consent.acceptAll(); setDays(null); }}>Renew</button>
+      <button onClick={() => { consent.acceptAll({ source: 'banner' }); setDays(null); }}>Renew</button>
     </div>
   );
 }

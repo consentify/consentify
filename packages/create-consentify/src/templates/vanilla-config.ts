@@ -1,3 +1,4 @@
+import { fallbackBlock, sdkImports } from './consent-config.js';
 import { formatGcmMapping } from './gcm-mapping.js';
 import type { TemplateContext } from './types.js';
 
@@ -14,18 +15,19 @@ ${formatGcmMapping(ctx.categories, '        ')}
 });`
         : '';
 
-    const imports = `import { createConsentify${ctx.enableGcm ? ', enableConsentMode' : ''} } from '@consentify/core';`;
+    const imports = sdkImports(ctx);
 
     if (ctx.useSaas) {
         const siteId = ctx.siteId ?? 'your-site-id-here';
-        const apiKeyLine = ctx.apiKey ? `\n    apiKey: '${ctx.apiKey}',` : '';
+        const publicKeyLine = ctx.publicKey ? `\n    publicKey: '${ctx.publicKey}',` : '';
         return `${imports}
 
 // SaaS mode: categories + policy version are fetched from consentify.dev on init.
 // Top-level await requires ESM ("type": "module") - standard for modern toolchains.
-export const consent = await createConsentify({
-    siteId: '${siteId}',${apiKeyLine}
+export const consent = await createCloudConsentify({
+    siteId: '${siteId}',${publicKeyLine}
     mode: '${ctx.mode}',
+${fallbackBlock(ctx, '    ')}
 });
 ${gcmBlock}
 
@@ -33,7 +35,9 @@ ${gcmBlock}
 if (typeof window !== 'undefined') {
     const state = consent.get();
     if (state.decision === 'unset') {
-        // TODO: replace this with your consent banner UI
+        // TODO: replace this with your consent banner UI. Pass the source, e.g.
+        //   acceptButton.addEventListener('click', () => consent.acceptAll({ source: 'banner' }));
+        //   rejectButton.addEventListener('click', () => consent.rejectAll({ source: 'banner' }));
         console.info('[consentify] no decision yet - show banner');
     }
 }
@@ -55,7 +59,9 @@ ${gcmBlock}
 if (typeof window !== 'undefined') {
     const state = consent.get();
     if (state.decision === 'unset') {
-        // TODO: replace this with your consent banner UI
+        // TODO: replace this with your consent banner UI. Pass the source, e.g.
+        //   acceptButton.addEventListener('click', () => consent.acceptAll({ source: 'banner' }));
+        //   rejectButton.addEventListener('click', () => consent.rejectAll({ source: 'banner' }));
         console.info('[consentify] no decision yet - show banner');
     }
 }

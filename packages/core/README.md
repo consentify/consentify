@@ -9,7 +9,7 @@
 
 ## Why Consentify?
 
-- **🪶 Lightweight** — Zero runtime dependencies, ~4.9 kB minified + gzipped
+- **🪶 Lightweight** — Zero runtime dependencies, ~4 kB minified + gzipped
 - **🔒 Type-safe** — Full TypeScript support with inference for your categories
 - **⚡ SSR-ready** — Separate server/client APIs that never touch the DOM on server
 - **⚛️ React-ready** — Built-in `useSyncExternalStore` support for React 18+
@@ -79,8 +79,8 @@ function CookieBanner() {
   return (
     <div className="cookie-banner">
       <p>We use cookies to enhance your experience.</p>
-      <button onClick={() => consent.acceptAll()}>Accept All</button>
-      <button onClick={() => consent.rejectAll()}>Essential Only</button>
+      <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button onClick={() => consent.rejectAll({ source: 'banner' })}>Essential Only</button>
     </div>
   );
 }
@@ -112,26 +112,27 @@ function useConsent() {
 
 ## Server-Side Usage
 
-The server API works with raw `Cookie` headers — perfect for Next.js, Remix, or any Node.js framework:
+The server API works with raw `Cookie` headers — perfect for Next.js, Remix, or any Node.js framework. Pass `{ cookieHeader }` as the last argument to switch a flat method to server mode. The key selects server mode, so pass it even without a cookie; an `undefined`, empty or `null` header means no consent yet:
 
 ```ts
-// Read consent from request
-const state = consent.server.get(request.headers.get('cookie'));
+const cookieHeader = request.headers.get('cookie');
 
-if (state.decision === 'decided' && state.snapshot.choices.analytics) {
-  // User consented to analytics
+// Read consent from request
+const state = consent.get({ cookieHeader });
+
+if (consent.isGranted('analytics', { cookieHeader })) {
+  // User consented to analytics (opt-out mode: also true while unset)
 }
 
 // Set consent (returns Set-Cookie header string)
-const setCookieHeader = consent.server.set(
-  { analytics: true },
-  request.headers.get('cookie')
-);
-response.headers.set('Set-Cookie', setCookieHeader);
+const setCookieHeader = consent.set({ analytics: true }, { cookieHeader });
+response.headers.append('Set-Cookie', setCookieHeader);
 
-// Clear consent
-const clearHeader = consent.server.clear();
+// Clear consent (returns a Max-Age=0 Set-Cookie header)
+const clearHeader = consent.clear({ cookieHeader });
 ```
+
+`consent.server.get(cookieHeader)`, `consent.server.set(choices, cookieHeader?)` and `consent.server.clear()` remain as the low-level equivalents.
 
 ### Next.js App Router Example
 
@@ -149,7 +150,7 @@ import { consent } from '@/lib/consent';
 
 export default async function RootLayout({ children }) {
   const cookieStore = await cookies();
-  const state = consent.server.get(cookieStore.toString());
+  const state = consent.get({ cookieHeader: cookieStore.toString() });
   
   return (
     <html>
@@ -215,17 +216,19 @@ Full method list: [API reference](https://github.com/consentify/consentify/blob/
 
 ### `createConsentify(options)`
 
-Returns a flat instance plus `policy`, `client`, and `server`. Call `isGranted`, `acceptAll`, `rejectAll`, and `getProof` on the instance. `client.get(category)` is deprecated — use `isGranted`.
+Returns a flat instance plus `policy`, `client`, and `server`. Call `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` on the instance; pass `{ cookieHeader }` as the last argument for server mode. With a server-side `secret` the instance also has `getProof`.
+
+Banner and preferences buttons should pass a `source` (`acceptAll({ source: 'banner' })`): a write with a `source` always records a new decision. A write without one that leaves the stored choices unchanged (for example restoring saved choices on load) is a no-op, and on the server returns a `Set-Cookie` header for the stored record as is.
 
 #### `client` (browser)
 
-The browser store used with `useSyncExternalStore`. `acceptAll`, `rejectAll`, and `getProof` are not on `client`.
+The browser store used with `useSyncExternalStore`. `isGranted`, `acceptAll`, `rejectAll`, and `getProof` are not on `client`.
 
 | Method | Description |
 |--------|-------------|
 | `get()` | Returns `ConsentState` — `{ decision: 'decided', snapshot }` or `{ decision: 'unset' }` |
-| `set(choices)` | Merges choices and persists; notifies subscribers if changed |
-| `clear()` | Removes stored consent; notifies subscribers |
+| `set(choices, opts?)` | Merges choices and stores a new decision, then notifies subscribers. Without `opts.source`, a call that leaves the stored choices unchanged is a no-op. Ignored (with a warning) outside a browser |
+| `clear()` | Removes stored consent; notifies subscribers. Ignored (with a warning) outside a browser |
 | `subscribe(cb)` | Subscribe to changes; returns unsubscribe function |
 | `getServerSnapshot()` | Returns `{ decision: 'unset' }` for SSR hydration |
 | `guard(category, onGrant, onRevoke?)` | Runs `onGrant` when that category is granted |
@@ -246,9 +249,14 @@ type ConsentState<T> =
   | { decision: 'decided'; snapshot: Snapshot<T> };
 
 interface Snapshot<T> {
+  v?: 2;               // Record format (absent on records written by v2.x)
+  id?: string;         // Random id of the decision (absent on records written by v2.x)
   policy: string;      // Policy identifier/hash
   givenAt: string;     // ISO timestamp
   choices: Choices<T>; // { necessary: true, ...categories }
+  pv?: string;         // policy.textVersion
+  lang?: string;       // UI language (option, per-call, or <html lang>)
+  src?: 'banner' | 'preferences' | 'api'; // per-call `source`
 }
 
 type Choices<T> = Record<'necessary' | T, boolean>;
@@ -286,28 +294,22 @@ ccpa.isGranted('analytics'); // true (until user opts out)
 
 ### Consent Proof (Audit Trail)
 
-```ts
-consent.set({ analytics: true, marketing: false });
-
-const proof = consent.getProof();
-// { policy: '...', givenAt: '2026-...', choices: {...}, signature: '...' }
-
-// Server-side
-const proof = consent.getProof(cookieHeader);
-```
-
-**Signed vs unsigned.** Pass a `secret` to enable tamper-evident HMAC-SHA256 signatures (recommended for any compliance use case). In signed mode, `getProof()` returns `Promise<ConsentProof<T> | null>`.
+Proofs are HMAC-SHA256 signed and server-only: pass a `secret` (which throws `ConsentifyConfigError` in a browser) and the instance gets an async `getProof()`. Instances without a `secret` have no `getProof`.
 
 ```ts
+// server code only
 const consent = createConsentify({
   policy: { categories: ['analytics'] as const },
-  secret: process.env.CONSENT_SIGNING_SECRET,
+  secret: process.env.CONSENT_SIGNING_SECRET!,
 });
 
-const proof = await consent.getProof();
+const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie') });
+// { v: 2, id: '...', policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null
+
+await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true
 ```
 
-Without a `secret`, `getProof()` falls back to a non-cryptographic FNV1a hash. This path is **forgeable**, emits a one-time `console.warn`, and is slated to return `null` in a future major release. Only use it for local debugging.
+`adapter.save()` runs in the browser and receives `{ visitorId, snapshot }` only. Signed proofs come from a server instance with a `secret`, via `getProof({ cookieHeader })` or `reportConsent`.
 
 ### Expiration Warning
 
@@ -341,7 +343,23 @@ For non-bundled apps (WordPress, static sites), load the IIFE build directly:
 </script>
 ```
 
-The IIFE bundle is ~5kb gzipped and exposes all exports on the `Consentify` global.
+The IIFE bundle is ~4.6kb gzipped and exposes all exports on the `Consentify` global.
+
+For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~6.3kb gzipped). It exposes the same exports plus `createCloudConsentify`:
+
+```html
+<script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>
+<script>
+  Consentify.createCloudConsentify({
+    siteId: 'your-site-id',
+    fallback: { categories: ['analytics'], identifier: 'your-published-policy-identifier' },
+  }).then(function (consent) {
+    consent.guard('analytics', function () {
+      // Load analytics script
+    });
+  });
+</script>
+```
 
 ### CSP nonce + SRI (recommended)
 
@@ -349,7 +367,7 @@ If your site enforces a strict Content Security Policy, pin a Subresource Integr
 
 ```html
 <script
-  src="https://unpkg.com/@consentify/core@2/dist/consentify.iife.min.js"
+  src="https://unpkg.com/@consentify/core@3/dist/consentify.iife.min.js"
   integrity="sha384-REPLACE_WITH_SRI_HASH"
   crossorigin="anonymous"
   nonce="%%CSP_NONCE%%"></script>
@@ -362,6 +380,22 @@ openssl dgst -sha384 -binary dist/consentify.iife.min.js | openssl base64 -A
 ```
 
 See [MDN: Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) for the full spec.
+
+## Cloud Mode (`@consentify/core/cloud`)
+
+Cloud (SaaS) mode is a separate entry point, so self-hosted apps never bundle it. `createCloudConsentify` loads your SiteConfig (cached, from the CDN, or from the required local `fallback` when the CDN is unreachable), derives the policy from it, and reports consent decisions to the ingest endpoint. It resolves to the same instance type as `createConsentify`, plus `consent.cloud` (`source` and `config`):
+
+```ts
+import { createCloudConsentify } from '@consentify/core/cloud';
+
+const consent = await createCloudConsentify({
+  siteId: 'your-site-id',
+  publicKey: 'pk_live_...', // optional; sent as a header with browser events
+  fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
+});
+```
+
+> **v3:** `createConsentify({ siteId })` now throws `ConsentifyConfigError`. Switch to `createCloudConsentify` from `@consentify/core/cloud`, add the required `fallback` and rename `apiKey` to `publicKey`. The hosted platform is not live yet; see the [API reference](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md#createcloudconsentifyinit--consentifycorecloud).
 
 ## How It Works
 

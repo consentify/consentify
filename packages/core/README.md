@@ -9,7 +9,7 @@
 
 ## Why Consentify?
 
-- **🪶 Lightweight** — Zero runtime dependencies, ~4.9 kB minified + gzipped
+- **🪶 Lightweight** — Zero runtime dependencies, ~4 kB minified + gzipped
 - **🔒 Type-safe** — Full TypeScript support with inference for your categories
 - **⚡ SSR-ready** — Separate server/client APIs that never touch the DOM on server
 - **⚛️ React-ready** — Built-in `useSyncExternalStore` support for React 18+
@@ -341,7 +341,20 @@ For non-bundled apps (WordPress, static sites), load the IIFE build directly:
 </script>
 ```
 
-The IIFE bundle is ~5kb gzipped and exposes all exports on the `Consentify` global.
+The IIFE bundle is ~4.3kb gzipped and exposes all exports on the `Consentify` global.
+
+For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~5.3kb gzipped). It exposes the same exports plus `createCloudConsentify`:
+
+```html
+<script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>
+<script>
+  Consentify.createCloudConsentify({ siteId: 'your-site-id' }).then(function (consent) {
+    consent.guard('analytics', function () {
+      // Load analytics script
+    });
+  });
+</script>
+```
 
 ### CSP nonce + SRI (recommended)
 
@@ -349,7 +362,7 @@ If your site enforces a strict Content Security Policy, pin a Subresource Integr
 
 ```html
 <script
-  src="https://unpkg.com/@consentify/core@2/dist/consentify.iife.min.js"
+  src="https://unpkg.com/@consentify/core@3/dist/consentify.iife.min.js"
   integrity="sha384-REPLACE_WITH_SRI_HASH"
   crossorigin="anonymous"
   nonce="%%CSP_NONCE%%"></script>
@@ -362,6 +375,18 @@ openssl dgst -sha384 -binary dist/consentify.iife.min.js | openssl base64 -A
 ```
 
 See [MDN: Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) for the full spec.
+
+## Cloud Mode (`@consentify/core/cloud`)
+
+Cloud (SaaS) mode is a separate entry point, so self-hosted apps never bundle it. `createCloudConsentify` fetches your SiteConfig, derives the policy from it, and reports consent decisions to the ingest endpoint. It resolves to the same instance type as `createConsentify`:
+
+```ts
+import { createCloudConsentify } from '@consentify/core/cloud';
+
+const consent = await createCloudConsentify({ siteId: 'your-site-id', apiKey: 'sk_live_...' });
+```
+
+> **v3:** `createConsentify({ siteId })` now throws `ConsentifyConfigError`. Switch to `createCloudConsentify` from `@consentify/core/cloud` with the same options. The hosted platform is not live yet; see the [API reference](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md#createcloudconsentifyinit--consentifycorecloud).
 
 ## How It Works
 

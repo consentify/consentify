@@ -1,6 +1,6 @@
 # Cloud Mode: Data & Privacy
 
-This document describes what data cloud mode (`createConsentify({ siteId })`) collects, stores, and transmits. For self-hosted mode (`policy` only), no network calls are made.
+This document describes what data cloud mode (`createCloudConsentify({ siteId })` from `@consentify/core/cloud`) collects, stores, and transmits. For self-hosted mode (`createConsentify({ policy })` from `@consentify/core`), no network calls are made and the cloud client is not part of your bundle.
 
 ## Self-Hosted Mode (No Cloud)
 
@@ -16,10 +16,12 @@ const consent = createConsentify({
 
 ## Cloud Mode (Hosted Platform)
 
-When you provide a `siteId`:
+When you create the instance with `createCloudConsentify` and a `siteId`:
 
 ```ts
-const consent = createConsentify({
+import { createCloudConsentify } from '@consentify/core/cloud';
+
+const consent = await createCloudConsentify({
   siteId: 'your-site-id',
   apiKey: 'optional-api-key', // if required by your setup
 });
@@ -70,16 +72,16 @@ The visitor identifier can be controlled:
 
 ```ts
 // Default: auto-generated UUID and persisted to localStorage
-const consent1 = createConsentify({ siteId: '...' });
+const consent1 = await createCloudConsentify({ siteId: '...' });
 
 // Custom string
-const consent2 = createConsentify({
+const consent2 = await createCloudConsentify({
   siteId: '...',
   visitorId: 'user-123',
 });
 
 // Custom factory (sync or async)
-const consent3 = createConsentify({
+const consent3 = await createCloudConsentify({
   siteId: '...',
   visitorId: async () => {
     const user = await fetchCurrentUser();
@@ -131,9 +133,9 @@ The hosted platform is not live yet - retention policies will be documented when
 You can redirect events to your own server instead:
 
 ```ts
-const consent = createConsentify({
+const consent = await createCloudConsentify({
   siteId: 'your-site-id',
-  ingestEndpoint: 'https://your-server.com/api/consent-events',
+  endpoints: { ingest: 'https://your-server.com/api/consent' }, // POSTs to .../api/consent/v1/events
 });
 ```
 
@@ -153,4 +155,4 @@ All events are sent via HTTPS with `keepalive: true` (survives page unload). The
 
 ---
 
-See [API Reference](./api-reference.md) for the full `createConsentify` config options.
+See [API Reference](./api-reference.md#createcloudconsentifyinit--consentifycorecloud) for the full `createCloudConsentify` config options.

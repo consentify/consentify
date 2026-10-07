@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createCloudConsentify } from './cloud';
 import { createConsentify, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, verifyProof, parseSetCookie, ConsentifyConfigError, type ConsentAdapter, type ConsentifySubscribable, type ConsentState, type ConsentProof, type Snapshot } from './index';
 
 // Helper to encode a snapshot as document.cookie value
@@ -2312,6 +2313,14 @@ describe('Cloud mode (Mode B)', () => {
         vi.useRealTimers();
     });
 
+    it('createConsentify rejects siteId and points to @consentify/core/cloud', () => {
+        expect(() => createConsentify({ siteId: 'site_abc' } as any)).toThrow(ConsentifyConfigError);
+        expect(() => createConsentify({ siteId: 'site_abc' } as any)).toThrow('@consentify/core/cloud');
+        // Compile-time: the typed overloads reject `siteId` too.
+        // @ts-expect-error siteId is not part of the self-hosted init
+        expect(() => createConsentify({ policy: { categories: ['analytics'] }, siteId: 'site_abc' })).toThrow(ConsentifyConfigError);
+    });
+
     const stubConfigFetch = (
         siteCfg: { categories: string[]; policyIdentifier: string; mode?: 'opt-in' | 'opt-out' },
         latestHash = 'abc123',
@@ -2331,7 +2340,7 @@ describe('Cloud mode (Mode B)', () => {
 
     it('returns a Promise when siteId is provided', async () => {
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
-        const promise = createConsentify({
+        const promise = createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         });
@@ -2344,7 +2353,7 @@ describe('Cloud mode (Mode B)', () => {
 
     it('uses categories from the fetched SiteConfig', async () => {
         stubConfigFetch({ categories: ['analytics', 'marketing'], policyIdentifier: 'v2' });
-        const c = await createConsentify({
+        const c = await createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         });
@@ -2353,7 +2362,7 @@ describe('Cloud mode (Mode B)', () => {
 
     it('local overrides take precedence over SiteConfig', async () => {
         stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1', mode: 'opt-in' });
-        const c = await createConsentify({
+        const c = await createCloudConsentify({
             siteId: 'site_abc',
             mode: 'opt-out',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
@@ -2363,7 +2372,7 @@ describe('Cloud mode (Mode B)', () => {
 
     it('throws ConsentifyConfigError on fetch failure', async () => {
         vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
-        await expect(createConsentify({
+        await expect(createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         })).rejects.toThrow(ConsentifyConfigError);
@@ -2376,7 +2385,7 @@ describe('Cloud mode (Mode B)', () => {
             }
             return Promise.resolve(new Response('ok'));
         }));
-        await expect(createConsentify({
+        await expect(createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test' },
         })).rejects.toThrow(ConsentifyConfigError);
@@ -2385,7 +2394,7 @@ describe('Cloud mode (Mode B)', () => {
     it('POSTs events to the ingest endpoint on consent change', async () => {
         vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
-        const c = await createConsentify({
+        const c = await createCloudConsentify({
             siteId: 'site_abc',
             apiKey: 'sk_test',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
@@ -2421,7 +2430,7 @@ describe('Cloud mode (Mode B)', () => {
         vi.stubGlobal('fetch', spy);
         vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
 
-        const c = await createConsentify({
+        const c = await createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         });
@@ -2444,7 +2453,7 @@ describe('Cloud mode (Mode B)', () => {
             // hash.json returns 404
             return Promise.resolve(new Response('not found', { status: 404 }));
         }));
-        await expect(createConsentify({
+        await expect(createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test' },
         })).rejects.toThrow(ConsentifyConfigError);
@@ -2456,7 +2465,7 @@ describe('Cloud mode (Mode B)', () => {
     it('reports a re-affirmation of the same choices as a new event', async () => {
         vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
-        const c = await createConsentify({
+        const c = await createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         });
@@ -2481,8 +2490,8 @@ describe('Cloud mode (Mode B)', () => {
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         };
-        const tab1 = await createConsentify(init);
-        const tab2 = await createConsentify(init);
+        const tab1 = await createCloudConsentify(init);
+        const tab2 = await createCloudConsentify(init);
         const tab2Change = vi.fn();
         tab2.on('change', tab2Change);
 
@@ -2501,7 +2510,7 @@ describe('Cloud mode (Mode B)', () => {
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
         };
-        const c = await createConsentify(init);
+        const c = await createCloudConsentify(init);
         c.set({ analytics: true });
         await vi.waitFor(() => {
             expect(spy.mock.calls.some(([url]) =>
@@ -2514,7 +2523,7 @@ describe('Cloud mode (Mode B)', () => {
 
         // Simulate a reload: a fresh instance hydrates the same decided state
         // from the cookie and must not re-send it (dedup key is persisted).
-        await createConsentify(init);
+        await createCloudConsentify(init);
         await new Promise(r => setTimeout(r, 20));
         const secondIngestCount = spy.mock.calls.filter(([url]) =>
             typeof url === 'string' && url.includes('ingest.test'),

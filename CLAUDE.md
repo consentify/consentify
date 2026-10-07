@@ -30,7 +30,7 @@ pnpm e2e
 # Lint (biome, lint-only — no formatter)
 pnpm lint
 
-# Check bundle size (core ESM < 5kb gzipped, IIFE < 5.25kb)
+# Check bundle size (limits in .size-limit.json: core ESM 5kb, core IIFE 4.4kb, cloud ESM 4.5kb, cloud IIFE 5.5kb gzipped)
 pnpm run size
 ```
 
@@ -57,7 +57,11 @@ git tag core-v1.0.0 && git push origin core-v1.0.0  # Trigger release
 
 ### Core Package (`packages/core`)
 
-`src/index.ts` is the public entry: it holds the `createConsentify()` factory and re-exports; implementation lives in `src/internal/` (`types`, `util`, `cookie`, `crypto`, `visitor`, `cloud`, `gcm`, `debug`). The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use; the `consent.server` and `consent.client` namespaces remain available for explicit access.
+Two public entries:
+- `src/index.ts` (`@consentify/core`): the self-hosted `createConsentify()` factory and re-exports. It never imports `internal/cloud`; passing `siteId` is a type error and throws `ConsentifyConfigError` at runtime.
+- `src/cloud.ts` (`@consentify/core/cloud`): `createCloudConsentify()` (async; fetches SiteConfig, builds the instance via `createConsentify`, starts reporting in the browser) plus the `CloudInit` / `SiteConfig` types.
+
+The ESM build bundles both entries in one esbuild call with `--splitting`, so shared core code lands once in a `dist/chunk-*.js` and `ConsentifyConfigError` stays a single class across entries (never build them as separate self-contained bundles). Implementation lives in `src/internal/` (`types`, `util`, `cookie`, `crypto`, `visitor`, `cloud`, `gcm`, `debug`). The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use; the `consent.server` and `consent.client` namespaces remain available for explicit access.
 
 - **Server signatures**: Take/return raw `Cookie` / `Set-Cookie` header strings (Node.js compatible, no DOM)
 - **Client signatures**: Browser-side storage with React `useSyncExternalStore` support via `subscribe()` and `getServerSnapshot()`
@@ -96,14 +100,15 @@ Key design patterns:
 
 ### Cloud (`packages/cloud`) — DEPRECATED
 
-`@consentify/cloud@2.0.0` is a no-op shell. `enableCloud()` only logs a deprecation warning and returns a no-op disposer. All cloud functionality (event reporting, visitor hash, dedup, retry buffer) lives in `@consentify/core` via `createConsentify({ siteId, apiKey })` (Mode B). The package is kept in the registry only because npm blocks unpublishing packages older than 72 hours.
+`@consentify/cloud@2.0.0` is a no-op shell. `enableCloud()` only logs a deprecation warning and returns a no-op disposer. All cloud functionality (event reporting, visitor hash, dedup, retry buffer) lives in `@consentify/core/cloud` via `createCloudConsentify({ siteId, apiKey })` (Mode B). The package is kept in the registry only because npm blocks unpublishing packages older than 72 hours.
 
-### IIFE Bundle
+### IIFE Bundles
 
-- Core includes an IIFE build: `dist/consentify.iife.js` and `dist/consentify.iife.min.js`
-- Built via esbuild, exposes all exports on `Consentify` global
-- Size budget via `.size-limit.json`: ESM `packages/core/dist/index.min.js` <5kb gzipped, IIFE `dist/consentify.iife.min.js` <5.25kb gzipped (IIFE wrapper + no tree-shaking costs extra)
-- The npm entry `dist/index.js` is an **unminified** esbuild bundle (debuggability, supply-chain reviewability); `dist/index.min.js` exists for size tracking and CDN use
+- Core (self-hosted only): `dist/consentify.iife.js` and `dist/consentify.iife.min.js`, built from `src/index.ts`
+- Cloud: `dist/consentify-cloud.iife.js` and `dist/consentify-cloud.iife.min.js`, built from `src/cloud-iife.ts` (build-only entry): every core export plus `createCloudConsentify`. Script-tag users on CMS sites are SaaS customers, so this bundle matters
+- Built via esbuild, both expose their exports on the `Consentify` global
+- Size budgets via `.size-limit.json` (gzipped): core ESM `dist/index.min.js` 5kb, core IIFE `dist/consentify.iife.min.js` 4.4kb, cloud ESM `dist/cloud.min.js` 4.5kb, cloud IIFE `dist/consentify-cloud.iife.min.js` 5.5kb
+- The npm entries `dist/index.js` / `dist/cloud.js` (+ shared `dist/chunk-*.js`) are **unminified** esbuild output (debuggability, supply-chain reviewability); `dist/index.min.js` and `dist/cloud.min.js` are standalone minified bundles for size tracking and CDN use
 - For non-bundler environments (WordPress, static sites, CMS)
 
 ### React Package (`packages/react`)
@@ -119,6 +124,7 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 - Build: `tsup` bundles a single ESM `dist/index.js` with `#!/usr/bin/env node` shebang (deviates from tsc-based pattern because a CLI needs bundled deps for fast `npx`).
 - Entry: `src/index.ts` wires `citty` command -> `src/cli.ts` orchestrator -> `@clack/prompts` wizard -> framework scaffolders -> `execa` install.
 - Templates live in `src/templates/*` (pure template-literal functions); per-framework logic in `src/frameworks/*`.
+- SaaS output (`--site-id`) imports `createCloudConsentify` from `@consentify/core/cloud` (`sdkImports()` in `templates/consent-config.ts`); vanilla script-tag instructions point to `consentify-cloud.iife.min.js`.
 - Non-interactive via flags: `--framework`, `--categories`, `--mode`, `--gcm`, `--site-id`, `--api-key`, `--pm`, `--yes`.
 - Never auto-edits existing files - only creates new files and prints wiring instructions.
 
@@ -128,8 +134,8 @@ Top-level npm package `create-consentify` (run via `npx create-consentify@latest
 - Root `vitest.config.ts` globs `packages/*/src/**/*.test.ts` - new workspace packages are auto-discovered, no per-package vitest config needed
 - Mock browser globals with `vi.stubGlobal` / `vi.unstubAllGlobals()` in `afterEach`
 - React tests use `@testing-library/react` with `renderHook`
-- Cloud-mode tests (in core's `index.test.ts`) mock `fetch` and `localStorage` via `vi.stubGlobal`
-- Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (IIFE: 5.25kb)
+- Cloud-mode tests (in core's `index.test.ts`, importing `createCloudConsentify` from `./cloud`) mock `fetch` and `localStorage` via `vi.stubGlobal`
+- Bundle size enforced via `size-limit` (`pnpm run size`) - core ESM must stay under 5kb gzipped (core IIFE 4.4kb, cloud ESM 4.5kb, cloud IIFE 5.5kb)
 - Lint enforced via `pnpm lint` (biome, lint-only; `noNonNullAssertion`/`useTemplate`/`noDocumentCookie`/`noConfusingVoidType` deliberately off)
 - Framework guides: `docs/guides/nextjs.md`, `vue.md`, `svelte.md`, `solid.md` — state-wiring recipes, no bundled UI
 - Privacy/compliance: `docs/guides/cloud-privacy.md` — data collection, storage, and transmission in cloud mode

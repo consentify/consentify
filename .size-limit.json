@@ -6,7 +6,17 @@
   },
   {
     "path": "packages/core/dist/consentify.iife.min.js",
-    "limit": "5.25 kb",
+    "limit": "4.4 kb",
+    "gzip": true
+  },
+  {
+    "path": "packages/core/dist/cloud.min.js",
+    "limit": "4.5 kb",
+    "gzip": true
+  },
+  {
+    "path": "packages/core/dist/consentify-cloud.iife.min.js",
+    "limit": "5.5 kb",
     "gzip": true
   }
 ]

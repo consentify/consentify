@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createCloudConsentify } from './cloud';
+import { version as pkgVersion } from '../package.json';
+import { createCloudConsentify, reportConsent } from './cloud';
 import { createConsentify, enableConsentMode, enableDebug, stableStringify, fnv1a, hashPolicy, verifyProof, parseSetCookie, ConsentifyConfigError, type ConsentAdapter, type ConsentifySubscribable, type ConsentState, type ConsentProof, type Snapshot } from './index';
 
 // Helper to encode a snapshot as document.cookie value
@@ -2605,6 +2606,12 @@ describe('Cloud mode (Mode B)', () => {
         return { spy, release };
     };
 
+    const ingestCalls = (spy: ReturnType<typeof vi.fn>) =>
+        spy.mock.calls.filter(([url]) => typeof url === 'string' && url.includes('ingest.test'));
+
+    const ingestBodies = (spy: ReturnType<typeof vi.fn>) =>
+        ingestCalls(spy).map(([, opts]) => JSON.parse((opts as RequestInit).body as string));
+
     it('returns a Promise when siteId is provided', async () => {
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         const promise = createCloudConsentify({
@@ -2944,26 +2951,98 @@ describe('Cloud mode (Mode B)', () => {
         expect(spy).toHaveBeenCalledTimes(4);
     });
 
-    it('POSTs events to the ingest endpoint on consent change', async () => {
+    it('POSTs a v2 event to <ingest>/v2/events on consent change', async () => {
         vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
-        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const spy = stubConfigFetch({ categories: ['analytics', 'marketing'], policyIdentifier: 'v1', policyTextVersion: '2026-10-01' });
         const c = await createCloudConsentify({
             siteId: 'site_abc',
-            apiKey: 'sk_test',
+            publicKey: 'pk_test',
             endpoints: EP,
             fallback: FB,
+            lang: 'de',
         });
-        c.set({ analytics: true });
-        await vi.waitFor(() => {
-            const ingestCall = spy.mock.calls.find(
-                ([url]) => typeof url === 'string' && url.includes('ingest.test'),
-            );
-            expect(ingestCall).toBeDefined();
+        c.set({ analytics: true }, { source: 'preferences' });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        const [url, init] = ingestCalls(spy)[0] as [string, RequestInit];
+        expect(url).toBe('https://ingest.test/v2/events');
+        expect(init.method).toBe('POST');
+        expect(init.keepalive).toBe(true);
+        const body = JSON.parse(init.body as string);
+        expect(Object.keys(body)).toEqual(['v', 'eventId', 'siteId', 'action', 'record', 'visitorHash', 'sdkVersion']);
+        const state = c.get();
+        if (state.decision !== 'decided') throw new Error('expected decided');
+        expect(body).toEqual({
+            v: 2,
+            eventId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+            siteId: 'site_abc',
+            action: 'customize',
+            record: state.snapshot,
+            visitorHash: localStorage.getItem('consentify_visitor'),
+            sdkVersion: pkgVersion,
         });
-        const ingestCall = spy.mock.calls.find(
-            ([url]) => typeof url === 'string' && url.includes('ingest.test'),
-        )!;
-        expect(ingestCall[0]).toBe('https://ingest.test/v1/events');
+        expect(body.record).toMatchObject({ v: 2, policy: 'v1', pv: '2026-10-01', lang: 'de', src: 'preferences' });
+        expect(body).not.toHaveProperty('proof');
+    });
+
+    it('sends publicKey only as the X-Consentify-Key header, never in the body', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', publicKey: 'pk_test', endpoints: EP, fallback: FB });
+        c.acceptAll();
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        const init = ingestCalls(spy)[0][1] as RequestInit;
+        expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'X-Consentify-Key': 'pk_test' });
+        expect(init.body as string).not.toContain('pk_test');
+        expect(JSON.parse(init.body as string)).not.toHaveProperty('apiKey');
+    });
+
+    it('sends no key header without publicKey', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        c.acceptAll();
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        expect((ingestCalls(spy)[0][1] as RequestInit).headers).toEqual({ 'Content-Type': 'application/json' });
+    });
+
+    it('gives every event its own eventId and stamps the package version', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        c.acceptAll();
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        vi.setSystemTime(t0 + 60_000);
+        c.acceptAll();
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
+        const [a, b] = ingestBodies(spy);
+        expect(a.eventId).toBeTypeOf('string');
+        expect(a.eventId).not.toBe(b.eventId);
+        expect(pkgVersion).toMatch(/^\d+\.\d+\.\d+/);
+        expect([a.sdkVersion, b.sdkVersion]).toEqual([pkgVersion, pkgVersion]);
+    });
+
+    it('buffers a failed event with publicKey and replays it with the header and the same eventId', async () => {
+        let fail = true;
+        const spy = vi.fn((url: string) => {
+            if (url.endsWith('/latest.json')) return Promise.resolve(new Response(JSON.stringify({ current: 'h1' })));
+            if (url.endsWith('/h1.json')) return Promise.resolve(new Response(JSON.stringify({ categories: ['analytics'], policyIdentifier: 'v1' })));
+            return Promise.resolve(new Response('x', { status: fail ? 503 : 202 }));
+        });
+        vi.stubGlobal('fetch', spy);
+        const c = await createCloudConsentify({ siteId: 'site_abc', publicKey: 'pk_test', endpoints: EP, fallback: FB });
+        c.acceptAll();
+        await vi.waitFor(() => expect(localStorage.getItem('consentify_event_buffer')).not.toBeNull());
+        const buffered = JSON.parse(localStorage.getItem('consentify_event_buffer')!);
+        expect(Object.keys(buffered).sort()).toEqual(['body', 'publicKey', 'url']);
+        expect(buffered).toMatchObject({ url: 'https://ingest.test/v2/events', publicKey: 'pk_test' });
+
+        // Next page load: the buffered body is replayed as is.
+        fail = false;
+        await createCloudConsentify({ siteId: 'site_abc', publicKey: 'pk_test', endpoints: EP, fallback: FB });
+        await vi.waitFor(() => expect(localStorage.getItem('consentify_event_buffer')).toBeNull());
+        const [first, replay] = ingestCalls(spy) as [string, RequestInit][];
+        expect(replay[1].body).toBe(first[1].body);
+        expect(JSON.parse(replay[1].body as string).eventId).toBe(JSON.parse(first[1].body as string).eventId);
+        expect(replay[1].headers).toEqual({ 'Content-Type': 'application/json', 'X-Consentify-Key': 'pk_test' });
     });
 
     it('writes failed send to consentify_event_buffer and drains on next success', async () => {
@@ -3016,9 +3095,6 @@ describe('Cloud mode (Mode B)', () => {
         });
         expect(c.cloud.source).toBe('fallback');
     });
-
-    const ingestCalls = (spy: ReturnType<typeof vi.fn>) =>
-        spy.mock.calls.filter(([url]) => typeof url === 'string' && url.includes('ingest.test'));
 
     it('reports a re-affirmation of the same choices as a new event', async () => {
         vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
@@ -3094,13 +3170,11 @@ describe('Cloud mode (Mode B)', () => {
 
     // --- Visitor id: minted only after a decision, never for reject_all ---
     const VISITOR_KEY = 'consentify_visitor';
-    const ingestBodies = (spy: ReturnType<typeof vi.fn>) =>
-        ingestCalls(spy).map(([, opts]) => JSON.parse((opts as RequestInit).body as string));
     const cloud = (extra: { visitorId?: string | (() => Promise<string>) } = {}) =>
         createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB, ...extra });
 
     it('does not touch consentify_visitor before a decision, retry buffer included', async () => {
-        localStorage.setItem('consentify_event_buffer', JSON.stringify({ url: 'https://ingest.test/v1/events', body: '{}' }));
+        localStorage.setItem('consentify_event_buffer', JSON.stringify({ url: 'https://ingest.test/v2/events', body: '{}' }));
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         await cloud();
         await vi.waitFor(() => expect(localStorage.getItem('consentify_event_buffer')).toBeNull());
@@ -3165,6 +3239,103 @@ describe('Cloud mode (Mode B)', () => {
             expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
         });
     }
+
+    // --- Server-side reporting (reportConsent) ---
+    const SRV = { siteId: 'srv_report', endpoints: EP, fallback: FB };
+    const serverCloud = async (extra: { secret?: string } = {}) => {
+        vi.stubGlobal('document', undefined); // isBrowser() === false
+        const spy = stubConfigFetch({ categories: ['analytics', 'marketing'], policyIdentifier: 'v1', policyTextVersion: '2026-10-01' });
+        const c = await createCloudConsentify({ ...SRV, ...extra } as typeof SRV);
+        return { c, spy };
+    };
+
+    it('reportConsent: builds the event from the Set-Cookie a server write returned', async () => {
+        const { c, spy } = await serverCloud();
+        expect(c.cloud).toMatchObject({ siteId: 'srv_report', ingest: 'https://ingest.test' });
+        const setCookie = c.acceptAll({ cookieHeader: undefined, source: 'banner', lang: 'en' });
+        expect(await reportConsent(c, { serverKey: 'sk_test', setCookie })).toBe(true);
+        expect(ingestCalls(spy)).toHaveLength(1);
+        const [url, init] = ingestCalls(spy)[0] as [string, RequestInit];
+        expect(url).toBe('https://ingest.test/v2/events');
+        expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'X-Consentify-Server-Key': 'sk_test' });
+        const body = JSON.parse(init.body as string);
+        expect(body).toEqual({
+            v: 2,
+            eventId: expect.any(String),
+            siteId: 'srv_report',
+            action: 'accept_all',
+            record: JSON.parse(parseSetCookie(setCookie).value),
+            sdkVersion: pkgVersion,
+        });
+        expect(body.record).toMatchObject({ v: 2, pv: '2026-10-01', lang: 'en', src: 'banner' });
+        expect(init.body as string).not.toContain('sk_test');
+    });
+
+    it('reportConsent: reads the record from a request Cookie header', async () => {
+        const { c, spy } = await serverCloud();
+        const value = setHeaderToCookieHeader(c.rejectAll({ cookieHeader: null, source: 'api' }));
+        expect(await reportConsent(c, { serverKey: 'sk_test', cookieHeader: 'a=1; ' + value + '; b=2' })).toBe(true);
+        const [body] = ingestBodies(spy);
+        expect(body.action).toBe('reject_all');
+        expect(body.record.choices).toEqual({ necessary: true, analytics: false, marketing: false });
+        expect(body.record.src).toBe('api');
+    });
+
+    it('reportConsent: includes an HMAC proof of the record when the instance has a secret', async () => {
+        const { c, spy } = await serverCloud({ secret: 'dev-secret' });
+        const setCookie = c.set({ analytics: true }, { cookieHeader: '' });
+        expect(await reportConsent(c, { serverKey: 'sk_test', setCookie })).toBe(true);
+        const [body] = ingestBodies(spy);
+        expect(body.action).toBe('customize');
+        expect(body.proof.signature).toMatch(/^[0-9a-f]{64}$/);
+        const { signature, ...signed } = body.proof;
+        expect(signed).toEqual(body.record);
+        expect(await verifyProof(body.proof, 'dev-secret')).toBe(true);
+        expect(await verifyProof({ ...body.proof, choices: { ...body.proof.choices, marketing: true } }, 'dev-secret')).toBe(false);
+    });
+
+    it('reportConsent: omits visitorHash without an explicit visitorId and sends one when given', async () => {
+        const { c, spy } = await serverCloud();
+        const setCookie = c.acceptAll({ cookieHeader: '' });
+        await reportConsent(c, { serverKey: 'sk_test', setCookie });
+        await reportConsent(c, { serverKey: 'sk_test', setCookie, visitorId: 'acct-42' });
+        await reportConsent(c, { serverKey: 'sk_test', setCookie, visitorId: async () => 'acct-43' });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await reportConsent(c, { serverKey: 'sk_test', setCookie, visitorId: () => { throw new Error('no session'); } });
+        const bodies = ingestBodies(spy);
+        expect(bodies.map(b => b.visitorHash)).toEqual([undefined, 'acct-42', 'acct-43', undefined]);
+        expect(bodies[0]).not.toHaveProperty('visitorHash');
+        expect(new Set(bodies.map(b => b.eventId)).size).toBe(4);
+    });
+
+    it('reportConsent: resolves false without a request when there is nothing to report', async () => {
+        const { c, spy } = await serverCloud();
+        expect(await reportConsent(c, { serverKey: 'sk_test', cookieHeader: undefined })).toBe(false);
+        expect(await reportConsent(c, { serverKey: 'sk_test', setCookie: c.clear({ cookieHeader: '' }) })).toBe(false);
+        const other = createConsentify({ policy: { categories: ['analytics'], identifier: 'other' } });
+        expect(await reportConsent(c, { serverKey: 'sk_test', setCookie: other.acceptAll({ cookieHeader: '' }) })).toBe(false);
+        expect(ingestCalls(spy)).toHaveLength(0);
+    });
+
+    it('reportConsent: resolves false on a network error, a non-2xx answer or a timeout', async () => {
+        const { c } = await serverCloud();
+        const setCookie = c.acceptAll({ cookieHeader: '' });
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))));
+        await expect(reportConsent(c, { serverKey: 'sk_test', setCookie })).resolves.toBe(false);
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('no', { status: 401 }))));
+        await expect(reportConsent(c, { serverKey: 'sk_test', setCookie })).resolves.toBe(false);
+        vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise((_, reject) => {
+            init.signal!.addEventListener('abort', () => reject(init.signal!.reason));
+        })));
+        await expect(reportConsent(c, { serverKey: 'sk_test', setCookie, timeoutMs: 10 })).resolves.toBe(false);
+    });
+
+    it('reportConsent: throws ConsentifyConfigError in a browser and sends nothing', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(() => reportConsent(c, { serverKey: 'sk_test', cookieHeader: '' })).toThrow(ConsentifyConfigError);
+        expect(ingestCalls(spy)).toHaveLength(0);
+    });
 });
 
 // ============================================================

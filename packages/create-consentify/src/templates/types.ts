@@ -9,7 +9,7 @@ export interface TemplateContext {
     enableGcm: boolean;
     useSaas: boolean;
     siteId?: string;
-    apiKey?: string;
+    publicKey?: string;
     srcDir: boolean;
 }
 

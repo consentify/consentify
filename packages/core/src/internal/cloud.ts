@@ -1,6 +1,15 @@
-import type { ConsentMode, ConsentState, UserCategory, VisitorIdSource } from './types';
+// Named JSON import: esbuild inlines only `version`, so bundles carry the
+// version of the package they were built from.
+import { version } from '../../package.json';
+import type { ConsentMode, ConsentProof, ConsentState, Snapshot, UserCategory, VisitorIdSource } from './types';
 import { canLocalStorage, isBrowser, logW } from './util';
-import { dropStoredVisitorId, ephemeralVisitorId, readOrCreateStoredVisitorId, resolveVisitorId } from './visitor';
+import {
+    dropStoredVisitorId,
+    ephemeralVisitorId,
+    generateVisitorId,
+    readOrCreateStoredVisitorId,
+    resolveVisitorId,
+} from './visitor';
 
 /**
  * Third-party vendor listed in a SiteConfig. Data for the consent UI only:
@@ -54,7 +63,45 @@ export function deriveCloudAction<T extends UserCategory>(
     return 'customize';
 }
 
-export interface BufferedEvent { url: string; body: string; apiKey?: string }
+/**
+ * Ingest event v2, POSTed as JSON to `<ingest>/v2/events`. Contract:
+ * `docs/plans/2026-10-07-saas-contract-v2.md`.
+ */
+export interface IngestEvent<T extends UserCategory = string> {
+    v: 2;
+    /** Random UUID per event; the idempotency key (a buffered retry resends it unchanged). */
+    eventId: string;
+    siteId: string;
+    action: CloudAction;
+    /** The consent record as stored (v2, or v1 for records written by SDK 2.x). */
+    record: Snapshot<T>;
+    /** Absent on server events without an explicit `visitorId`. */
+    visitorHash?: string;
+    /** Version of `@consentify/core` that built the event. */
+    sdkVersion: string;
+    /** HMAC proof of `record`. Server events only, when the instance has a `secret`. */
+    proof?: ConsentProof<T>;
+}
+
+/** Header carrying `CloudInit.publicKey` (browser events). */
+export const PUBLIC_KEY_HEADER = 'X-Consentify-Key';
+/** Header carrying the server key (`reportConsent`). */
+export const SERVER_KEY_HEADER = 'X-Consentify-Server-Key';
+
+export const eventsUrl = (ingest: string): string => ingest.replace(/\/$/, '') + '/v2/events';
+
+// `undefined` fields (`visitorHash`, `proof`) are dropped by JSON.stringify.
+export const eventBody = <T extends UserCategory>(
+    siteId: string,
+    action: CloudAction,
+    record: Snapshot<T>,
+    visitorHash?: string,
+    proof?: ConsentProof<T>,
+): string => JSON.stringify({
+    v: 2, eventId: generateVisitorId(), siteId, action, record, visitorHash, sdkVersion: version, proof,
+} satisfies IngestEvent<T>);
+
+export interface BufferedEvent { url: string; body: string; publicKey?: string }
 
 export function readPendingEvent(): BufferedEvent | null {
     if (!canLocalStorage()) return null;
@@ -83,18 +130,21 @@ export const dropEvent = (): void => {
 };
 
 // fetch with keepalive survives page unload on modern browsers, so a separate
-// navigator.sendBeacon path is unnecessary here.
-export function postCloudEvent(evt: BufferedEvent): Promise<boolean> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (evt.apiKey) headers['X-API-Key'] = evt.apiKey;
-    return fetch(evt.url, { method: 'POST', headers, body: evt.body, keepalive: true })
+// navigator.sendBeacon path is unnecessary here. Resolves `false` on network
+// errors, aborts and non-2xx answers; never rejects.
+export function postEvent(url: string, body: string, headers: Record<string, string>, signal?: AbortSignal): Promise<boolean> {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body, keepalive: true, signal })
         .then(res => res.ok)
         .catch(() => false);
 }
 
+// The public key goes in a header only, never in the body.
+export const postCloudEvent = (evt: BufferedEvent): Promise<boolean> =>
+    postEvent(evt.url, evt.body, evt.publicKey ? { [PUBLIC_KEY_HEADER]: evt.publicKey } : {});
+
 export interface StartCloudReportingOptions {
     siteId: string;
-    apiKey?: string;
+    publicKey?: string;
     ingestEndpoint: string;
     /** Integrator-supplied id; when set it is sent with every event. */
     visitorId?: VisitorIdSource;
@@ -115,7 +165,7 @@ export function startCloudReporting<T extends UserCategory>(
     opts: StartCloudReportingOptions,
 ): () => void {
     if (!isBrowser()) return () => {};
-    const url = `${opts.ingestEndpoint.replace(/\/$/, '')}/v1/events`;
+    const url = eventsUrl(opts.ingestEndpoint);
     const userCats = instance.policy.categories.filter(c => c !== 'necessary');
     // Dedup events by `siteId + policy + givenAt`; `givenAt` is a fresh ISO
     // timestamp on every real write, so identical snapshots (e.g. cross-tab
@@ -165,16 +215,10 @@ export function startCloudReporting<T extends UserCategory>(
                 return ephemeralVisitorId();
             });
             // Payload key is `visitorHash` to match the ingest-endpoint contract;
-            // the SDK config calls it `visitorId` everywhere else.
-            const body = JSON.stringify({
-                siteId: opts.siteId,
-                action,
-                categories: state.snapshot.choices,
-                visitorHash,
-                policyVersion: state.snapshot.policy,
-                ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
-            });
-            const evt: BufferedEvent = { url, body, apiKey: opts.apiKey };
+            // the SDK config calls it `visitorId` everywhere else. Browser
+            // events never carry a proof (the secret is server-only).
+            const body = eventBody(opts.siteId, action, state.snapshot, visitorHash);
+            const evt: BufferedEvent = { url, body, publicKey: opts.publicKey };
             const ok = await postCloudEvent(evt);
             if (ok) dropEvent(); else savePendingEvent(evt);
         })();

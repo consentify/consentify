@@ -286,7 +286,7 @@ For non-bundled apps (WordPress, static sites), use the IIFE build:
 </script>
 ```
 
-The IIFE bundle is ~4.4kb gzipped and exposes all exports on the `Consentify` global. It is self-hosted only; for cloud mode load `dist/consentify-cloud.iife.min.js` instead (~5.9kb gzipped), which exposes the same exports plus `Consentify.createCloudConsentify` (see [below](#createcloudconsentifyinit--consentifycorecloud)).
+The IIFE bundle is ~4.4kb gzipped and exposes all exports on the `Consentify` global. It is self-hosted only; for cloud mode load `dist/consentify-cloud.iife.min.js` instead (~6.1kb gzipped), which exposes the same exports plus `Consentify.createCloudConsentify` (see [below](#createcloudconsentifyinit--consentifycorecloud)).
 
 ### CSP nonce + SRI (recommended)
 
@@ -313,7 +313,7 @@ import { createCloudConsentify } from '@consentify/core/cloud';
 
 const consent = await createCloudConsentify({
   siteId: 'your-site-id',
-  apiKey: 'sk_live_...',  // optional
+  publicKey: 'pk_live_...', // optional; sent as the X-Consentify-Key header
   // Required: used when the CDN is unreachable and nothing is cached.
   fallback: {
     categories: ['analytics', 'marketing'],
@@ -332,13 +332,13 @@ const consent = await createCloudConsentify({
 | `fallback` | `{ categories: readonly string[]; identifier?: string; textVersion?: string; mode?: ConsentMode; consentMaxAgeDays?: number }` | *required* | Local policy used when no SiteConfig is available (network error, timeout, non-OK status, malformed config) and nothing is cached. Set `identifier` to the site's published `policyIdentifier`; otherwise returning visitors see the banner again while the fallback is active. `textVersion` is recorded as `pv` while the fallback is in use |
 | `timeoutMs` | `number` | `3000` | Deadline for the whole two-hop SiteConfig fetch; the requests are aborted when it passes |
 | `configTtlSec` | `number` | `3600` | How long a cached SiteConfig is used without a request. After that it is served stale and refreshed in the background |
-| `apiKey` | `string` | — | API key sent with ingest events |
+| `publicKey` | `string` | — | Public key of the site. Sent only as the `X-Consentify-Key` header of browser events, never in the body. Not a secret: it ships in your client bundle |
 | `endpoints.config` | `string` | `https://cdn.consentify.dev` | SiteConfig CDN |
 | `endpoints.ingest` | `string` | `https://ingest.consentify.dev` | Ingest endpoint |
 | `mode`, `consentMaxAgeDays` | | from SiteConfig | Local values override the SiteConfig (or `fallback`) |
 | `cookie`, `expirationWarningDays`, `storage`, `lang`, `secret`, `adapter`, `visitorId` | | | Same as [`createConsentify`](#createconsentifyinit) |
 
-`policy` is not accepted: categories, the policy identifier and the policy text version (`policyTextVersion`, recorded as `pv` on every new record) come from the SiteConfig. With `secret` (server-only) it resolves to an instance whose `getProof()` is HMAC-signed. The `CloudInit`, `CloudFallback`, `CloudInfo`, `SiteConfig`, `SiteConfigSource` and `Vendor` types are exported from `@consentify/core/cloud`. Core and cloud share one copy of the core code, so `ConsentifyConfigError` from `@consentify/core` matches errors thrown by the cloud factory.
+`policy` is not accepted: categories, the policy identifier and the policy text version (`policyTextVersion`, recorded as `pv` on every new record) come from the SiteConfig. With `secret` (server-only) it resolves to an instance whose `getProof()` is HMAC-signed. The `CloudInit`, `CloudFallback`, `CloudInfo`, `SiteConfig`, `SiteConfigSource`, `Vendor`, `IngestEvent` and `ReportConsentOptions` types are exported from `@consentify/core/cloud`. Core and cloud share one copy of the core code, so `ConsentifyConfigError` from `@consentify/core` matches errors thrown by the cloud factory.
 
 #### SiteConfig loading, caching and offline behavior
 
@@ -353,6 +353,8 @@ The returned instance exposes the outcome for debugging:
 ```ts
 consent.cloud.source; // 'network' | 'cache' | 'stale' | 'fallback'
 consent.cloud.config; // the SiteConfig in use (see below)
+consent.cloud.siteId; // init.siteId
+consent.cloud.ingest; // ingest base URL in use (endpoints.ingest or the default)
 ```
 
 When `source` is `'fallback'`, `config` is your `fallback` in SiteConfig shape (`policyIdentifier` is `fallback.identifier`, or the category hash when it is omitted; `policyTextVersion` is `fallback.textVersion`).
@@ -389,6 +391,49 @@ Script-tag sites use the cloud IIFE, which exposes every core export plus `creat
 </script>
 ```
 
+#### Event reporting
+
+In the browser the instance POSTs one event per decision to `<ingest>/v2/events`: `{ v: 2, eventId, siteId, action, record, visitorHash, sdkVersion }`, where `record` is the full [consent record](#consent-record) and `action` is `accept_all`, `reject_all` or `customize`. `publicKey` travels only in the `X-Consentify-Key` header. The full wire contract is in [`docs/plans/2026-10-07-saas-contract-v2.md`](../plans/2026-10-07-saas-contract-v2.md); what is collected is described in the [cloud privacy guide](./cloud-privacy.md).
+
+### `reportConsent(consent, options)` — server-side reporting
+
+Decisions written on the server (`consent.set/acceptAll/rejectAll({ cookieHeader })`, e.g. in a Next.js Server Action) never pass through the browser reporter until the next page load. `reportConsent` sends them to the ingest endpoint right away, with a server key and, when the instance has a `secret`, an HMAC proof.
+
+```ts
+'use server';
+import { cookies } from 'next/headers';
+import { parseSetCookie } from '@consentify/core';
+import { createCloudConsentify, reportConsent } from '@consentify/core/cloud';
+
+const consent = await createCloudConsentify({
+  siteId: process.env.CONSENTIFY_SITE_ID!,
+  fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
+  secret: process.env.CONSENT_SIGNING_SECRET!, // optional: adds `proof` to server events
+});
+
+export async function acceptAllAction() {
+  const store = await cookies();
+  const setCookie = consent.acceptAll({ cookieHeader: store.toString(), source: 'banner' });
+  const { name, value, options } = parseSetCookie(setCookie);
+  store.set(name, value, options);
+  await reportConsent(consent, { serverKey: process.env.CONSENTIFY_SERVER_KEY!, setCookie });
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `serverKey` | `string` | *required* | Server key of the site, sent as `X-Consentify-Server-Key`. Keep it in server-only env vars |
+| `setCookie` | `string` | — | The `Set-Cookie` header a server write returned. Pass this **or** `cookieHeader` |
+| `cookieHeader` | `string \| null \| undefined` | — | A request `Cookie` header that carries the record |
+| `visitorId` | `string \| () => string \| Promise<string>` | — | Your own id for the visitor, sent as `visitorHash`. There is no stored id on the server, so without it the event has no `visitorHash`. A factory that throws drops `visitorHash`, not the event |
+| `timeoutMs` | `number` | `3000` | Request deadline |
+
+- `consent` must come from `createCloudConsentify`: the site id and ingest endpoint are taken from `consent.cloud`, and the record must match the instance's policy.
+- Resolves `true` when the ingest answered 2xx, and `false` when there is no valid record (unset, cleared, other policy, expired) or the request failed or timed out. It never rejects and never retries.
+- Throws `ConsentifyConfigError` when called in a browser, like `secret`: the server key would leak. It is not part of the cloud IIFE.
+- The event is the browser event plus `proof` (a [`ConsentProof`](#consent-proof-audit-trail) of `record`) when the instance has a `secret`. Whoever holds the secret can check it with `verifyProof`.
+- On the next page load, the browser reporter also reports the server-written record (it has not seen it yet) with a new `eventId`. The ingest treats `siteId` + `record.policy` + `record.givenAt` as one decision; see the contract.
+
 ### Migrating to v3: cloud mode
 
 `createConsentify` no longer accepts `siteId`. Import the cloud factory from the subpath and add the now-required `fallback`:
@@ -399,7 +444,7 @@ Script-tag sites use the cloud IIFE, which exposes every core export plus `creat
 + import { createCloudConsentify } from '@consentify/core/cloud';
 + const consent = await createCloudConsentify({
 +   siteId: 'your-site-id',
-+   apiKey: 'sk_live_...',
++   publicKey: 'pk_live_...',
 +   fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
 + });
 ```
@@ -408,7 +453,16 @@ A CDN failure no longer rejects the factory: code that caught `ConsentifyConfigE
 
 Script-tag users switch from `dist/consentify.iife.min.js` to `dist/consentify-cloud.iife.min.js` and call `Consentify.createCloudConsentify(...)`.
 
-> **Note:** The separate `@consentify/cloud` package is deprecated as of `v2.0.0` and is a no-op. Remove it from your `package.json` and use `createCloudConsentify({ siteId, apiKey })` from `@consentify/core/cloud`.
+| v2 | v3 |
+|----|----|
+| `apiKey` option | `publicKey` |
+| Key sent as `X-API-Key` header **and** `apiKey` in the event body | Key sent only as the `X-Consentify-Key` header |
+| `POST <ingest>/v1/events` with `{ siteId, action, categories, visitorHash, policyVersion }` | `POST <ingest>/v2/events` with `{ v: 2, eventId, siteId, action, record, visitorHash, sdkVersion }`; a custom `endpoints.ingest` must accept the new shape |
+| `consentify_event_buffer` holds `{ url, body, apiKey? }` | `{ url, body, publicKey? }` |
+| Decisions made in server code were not reported | `reportConsent(consent, { serverKey, setCookie })` |
+| `create-consentify --api-key`, `CONSENTIFY_API_KEY` | `--public-key`, `CONSENTIFY_PUBLIC_KEY` |
+
+> **Note:** The separate `@consentify/cloud` package is deprecated as of `v2.0.0` and is a no-op. Remove it from your `package.json` and use `createCloudConsentify({ siteId, publicKey, fallback })` from `@consentify/core/cloud`.
 
 ### Migrating to v3: server API and proofs
 

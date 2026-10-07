@@ -54,15 +54,15 @@ export function generateConsentConfig(ctx: TemplateContext): string {
         const siteIdExpr = prefix
             ? `process.env.${prefix}CONSENTIFY_SITE_ID!`
             : `process.env.CONSENTIFY_SITE_ID!`;
-        const apiKeyExpr = prefix
-            ? `process.env.${prefix}CONSENTIFY_API_KEY`
-            : `process.env.CONSENTIFY_API_KEY`;
+        const publicKeyExpr = prefix
+            ? `process.env.${prefix}CONSENTIFY_PUBLIC_KEY`
+            : `process.env.CONSENTIFY_PUBLIC_KEY`;
         const body = `
 // SaaS mode: categories + policy version are fetched from consentify.dev on init.
 // Top-level await requires ESM ("type": "module") - standard for modern toolchains.
 export const consent = await createCloudConsentify({
     siteId: ${siteIdExpr},
-    apiKey: ${apiKeyExpr},
+    publicKey: ${publicKeyExpr},
     mode: '${ctx.mode}',
 ${fallbackBlock(ctx, '    ')}
 });

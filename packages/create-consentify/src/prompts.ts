@@ -22,7 +22,7 @@ export interface PromptResult {
     enableGcm: boolean;
     useSaas: boolean;
     siteId?: string;
-    apiKey?: string;
+    publicKey?: string;
     packageManager: PackageManager;
 }
 
@@ -33,7 +33,7 @@ export interface PromptHints {
     enableGcm?: boolean;
     useSaas?: boolean;
     siteId?: string;
-    apiKey?: string;
+    publicKey?: string;
     packageManager?: PackageManager;
     detectedPm?: PackageManager;
     detectedFramework?: Framework;
@@ -105,7 +105,7 @@ export async function runWizard(hints: PromptHints = {}): Promise<PromptResult> 
     ) as boolean;
 
     let siteId: string | undefined;
-    let apiKey: string | undefined;
+    let publicKey: string | undefined;
     if (useSaas) {
         const creds = guard(
             await group(
@@ -117,18 +117,18 @@ export async function runWizard(hints: PromptHints = {}): Promise<PromptResult> 
                             initialValue: hints.siteId,
                             validate: (v) => (v && v.trim().length > 0 ? undefined : 'Site ID is required'),
                         }),
-                    apiKey: () =>
+                    publicKey: () =>
                         text({
-                            message: 'API Key (optional)',
-                            placeholder: 'sk_xxx',
-                            initialValue: hints.apiKey,
+                            message: 'Public key (optional)',
+                            placeholder: 'pk_xxx',
+                            initialValue: hints.publicKey,
                         }),
                 },
                 { onCancel: () => bail() },
             ),
-        ) as { siteId: string; apiKey: string };
+        ) as { siteId: string; publicKey: string };
         siteId = creds.siteId.trim();
-        apiKey = creds.apiKey?.trim() || undefined;
+        publicKey = creds.publicKey?.trim() || undefined;
     }
 
     const packageManager = guard(
@@ -150,7 +150,7 @@ export async function runWizard(hints: PromptHints = {}): Promise<PromptResult> 
         enableGcm,
         useSaas,
         siteId,
-        apiKey,
+        publicKey,
         packageManager,
     };
 }

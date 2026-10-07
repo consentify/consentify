@@ -23,7 +23,7 @@ import { createCloudConsentify } from '@consentify/core/cloud';
 
 const consent = await createCloudConsentify({
   siteId: 'your-site-id',
-  apiKey: 'optional-api-key', // if required by your setup
+  publicKey: 'pk_live_...', // optional; public, sent as a request header
   fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
 });
 ```
@@ -32,7 +32,7 @@ Consentify reports consent changes to the hosted platform for audit trails and a
 
 ## SiteConfig Requests
 
-To build the instance, the SDK loads the site's configuration (categories, policy identifier and text version, defaults, banner locales and vendor list) with plain `GET` requests to `https://cdn.consentify.dev/config/<siteId>/latest.json` and `/config/<siteId>/<hash>.json` (or your `endpoints.config`). The SDK adds no visitor identifier, consent choices or API key to these requests. The result is cached (see below), so most page loads and server renders make no request at all.
+To build the instance, the SDK loads the site's configuration (categories, policy identifier and text version, defaults, banner locales and vendor list) with plain `GET` requests to `https://cdn.consentify.dev/config/<siteId>/latest.json` and `/config/<siteId>/<hash>.json` (or your `endpoints.config`). The SDK adds no visitor identifier, consent choices or key to these requests. The result is cached (see below), so most page loads and server renders make no request at all.
 
 ## Offline Behavior
 
@@ -51,7 +51,7 @@ Cloud mode uses four localStorage keys:
 | Key | Purpose | Lifetime | Content |
 |-----|---------|----------|---------|
 | `consentify_visitor` | Visitor identifier for consent records (not used when you pass `visitorId`) | Created at the first `accept_all` or `customize` decision, never on page load. Deleted when the visitor chooses `reject_all`; otherwise kept until site data is cleared | Random UUID v4 (a `Math.random` fallback on browsers without Web Crypto) |
-| `consentify_event_buffer` | Retry buffer for failed events | Until next successful send | JSON: `{ url, body, apiKey? }` |
+| `consentify_event_buffer` | Retry buffer for the last failed event | Until the next successful send, or the next page load, which retries it once | JSON: `{ url, body, publicKey? }` - the event payload below and your public key |
 | `consentify_last_event` | Deduplication key | Persistent | `siteId\|policyHash\|givenAt` to prevent re-reporting identical decisions |
 | `consentify_cfg_<siteId>` | SiteConfig cache | Overwritten on each refresh; fresh for `configTtlSec` (default 1 hour), then served stale while refreshing | JSON: `{ t, h, c }` - fetch time, config hash, and the site's public SiteConfig. No visitor data |
 
@@ -59,32 +59,50 @@ If localStorage is unavailable (private browsing, quota exceeded, etc.), dedupli
 
 ## Consent Record
 
-The consent record kept in the `consentify` cookie (and passed to a custom `adapter`) stores the policy version, timestamp and choices, plus the policy text version (`pv`), the language of the consent UI (`lang`) and which UI recorded the decision (`src`: `banner`, `preferences` or `api`). These fields describe what the visitor was shown, not who the visitor is. The event payload below does not include them yet.
+The consent record kept in the `consentify` cookie (and passed to a custom `adapter`) stores the policy version, timestamp and choices, plus the policy text version (`pv`), the language of the consent UI (`lang`) and which UI recorded the decision (`src`: `banner`, `preferences` or `api`). These fields describe what the visitor was shown, not who the visitor is. Every event carries the full record (see below).
 
 ## Event Payload
 
-Each consent change is POSTed to `https://ingest.consentify.dev/v1/events` (or your custom endpoint):
+Each consent change in the browser is POSTed to `https://ingest.consentify.dev/v2/events` (or your custom endpoint):
 
 ```json
 {
+  "v": 2,
+  "eventId": "9b2f7c1e-4d3a-4f6b-8e21-0c5d7a9e3f14",
   "siteId": "your-site-id",
-  "action": "accept_all" | "reject_all" | "customize",
-  "categories": {
-    "analytics": true,
-    "marketing": false,
-    "necessary": true
+  "action": "customize",
+  "record": {
+    "v": 2,
+    "policy": "2026-10-01",
+    "givenAt": "2026-10-07T12:34:56.789Z",
+    "choices": { "necessary": true, "analytics": true, "marketing": false },
+    "pv": "2026-10-01",
+    "lang": "en",
+    "src": "preferences"
   },
   "visitorHash": "550e8400-e29b-41d4-a716-446655440000",
-  "policyVersion": "abc123def456",
-  "apiKey": "optional-key-if-configured"
+  "sdkVersion": "3.0.0"
 }
 ```
 
-- **action**: Derived from the decision: `accept_all` (all user categories granted), `reject_all` (none granted), `customize` (mixed or unset)
-- **categories**: Full snapshot of choices including `necessary` (always `true`)
+- **eventId**: Random UUID for this event, so a retried event is stored once. Not linked to the visitor
+- **action**: Derived from the decision: `accept_all` (all user categories granted), `reject_all` (none granted), `customize` (mixed)
+- **record**: The [consent record](#consent-record) as stored in the cookie: policy version, timestamp, choices (including `necessary`, always `true`), and `pv`, `lang`, `src` when set. Records written by SDK 2.x have only `policy`, `givenAt` and `choices`
 - **visitorHash**: Your `visitorId` if you set one. Otherwise the stored random id for `accept_all` and `customize`, and a one-off 8-character hex token for `reject_all` (see [Visitor ID](#visitor-id))
-- **policyVersion**: Hash of the policy definition; changes when categories change
-- **apiKey**: Only included if provided in the SDK config (for server-to-server auth)
+- **sdkVersion**: Version of `@consentify/core` that sent the event
+
+Your public key, if configured, is sent only in the `X-Consentify-Key` request header, never in the body. It identifies the site and is not a secret.
+
+## Server Events
+
+Decisions made in server code (for example a Next.js Server Action calling `consent.acceptAll({ cookieHeader })`) can be reported with `reportConsent(consent, { serverKey, setCookie })` from `@consentify/core/cloud`. A server event has the same shape as above, with two differences:
+
+- **visitorHash** is present only when you pass `visitorId`. There is no stored visitor id on the server, so by default server events carry no visitor identifier at all.
+- **proof**: when the instance was created with a `secret`, the event includes an HMAC-SHA256 signature of the record (`{ ...record, signature }`). It contains no data beyond the record. Browser events never carry a proof.
+
+Server events authenticate with your server key in the `X-Consentify-Server-Key` header. Keep it in server-only environment variables; `reportConsent` throws when called in a browser.
+
+The browser also reports a server-written record on the next page load (it has not reported it yet), so the platform may receive the same decision twice and stores it once.
 
 ## Visitor ID
 
@@ -117,7 +135,7 @@ const consent2 = await createCloudConsentify({
 });
 ```
 
-A custom `visitorId` is sent as `visitorHash` with every event, `reject_all` included, and is passed to the adapter. The SDK then never reads, creates or deletes `consentify_visitor`. The reporter calls a factory once per event; if the factory throws or rejects, that event carries a one-off token instead.
+A custom `visitorId` is sent as `visitorHash` with every browser event, `reject_all` included, and is passed to the adapter. The SDK then never reads, creates or deletes `consentify_visitor`. The reporter calls a factory once per event; if the factory throws or rejects, that event carries a one-off token instead.
 
 ### Legal basis
 
@@ -167,11 +185,11 @@ You can redirect events to your own server instead:
 const consent = await createCloudConsentify({
   siteId: 'your-site-id',
   fallback, // as above
-  endpoints: { ingest: 'https://your-server.com/api/consent' }, // POSTs to .../api/consent/v1/events
+  endpoints: { ingest: 'https://your-server.com/api/consent' }, // POSTs to .../api/consent/v2/events
 });
 ```
 
-Events are identical in structure. Your endpoint must accept POST requests with the payload above and return HTTP 2xx on success.
+Events are identical in structure. Your endpoint must accept POST requests with the payload above and return HTTP 2xx on success. `reportConsent` posts to the same endpoint.
 
 ## No Identifier Linking
 
@@ -183,7 +201,12 @@ Cloud mode does not:
 
 ## Transport Security
 
-All events are sent via HTTPS with `keepalive: true` (survives page unload). The `X-API-Key` header is used for optional auth if you configure `apiKey`.
+All events are sent via HTTPS with `keepalive: true` (survives page unload). Keys travel only in request headers, never in the event body:
+
+| Header | Key | Where | What it allows |
+|--------|-----|-------|----------------|
+| `X-Consentify-Key` | `publicKey` | Browser events | Submitting browser events for its site. Public: it ships in your client bundle |
+| `X-Consentify-Server-Key` | `serverKey` | `reportConsent` (server) | Submitting server events for its site, including proofs. Secret: never expose it to the browser |
 
 ---
 

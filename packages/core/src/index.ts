@@ -127,10 +127,14 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
      */
     adapter?: ConsentAdapter<ArrToUnion<Cs>>;
     /**
-     * Visitor identifier used by the adapter and cloud reporter. When omitted,
-     * a per-browser id is generated and persisted in localStorage under
-     * `consentify_visitor`. On the server this falls back to an empty string
-     * unless explicitly provided.
+     * Visitor identifier used by the adapter and cloud reporter. When set (a
+     * string or a sync/async factory) it is always used, also for `reject_all`
+     * events. When omitted, a random id is stored in localStorage under
+     * `consentify_visitor`, but only after a decision: hydration on load only
+     * reads an existing id (and skips `adapter.load()` when there is none),
+     * `adapter.save()` and accept/customize cloud events create it, and a
+     * cloud `reject_all` deletes it and reports a one-off token instead. On
+     * the server this falls back to an empty string unless explicitly provided.
      */
     visitorId?: VisitorIdSource;
 }
@@ -480,12 +484,15 @@ export function createConsentify<Cs extends readonly string[]>(
     // ======================================================
 
     // ---- Adapter + visitor id ----
-    // Visitor id is resolved lazily and cached. Adapter `save`/`load` are
-    // fire-and-forget: failures are logged but never bubble up into the
-    // consent flow or throw from `client.set`.
+    // An explicit `visitorId` is resolved lazily and cached. The default stored
+    // id is re-read on each use: hydration only reads it (`create` false), so
+    // a first-time visitor gets no id before deciding; `save` may mint it.
+    // Adapter `save`/`load` are fire-and-forget: failures are logged but never
+    // bubble up into the consent flow or throw from `client.set`.
     const adapter = init.adapter;
     let visitorIdPromise: Promise<string> | null = null;
-    const getVisitorId = (): Promise<string> => {
+    const getVisitorId = (create: boolean): Promise<string> => {
+        if (!init.visitorId) return resolveVisitorId(undefined, create);
         if (!visitorIdPromise) {
             visitorIdPromise = resolveVisitorId(init.visitorId).catch(err => {
                 logW('visitorId failed:', err);
@@ -501,7 +508,7 @@ export function createConsentify<Cs extends readonly string[]>(
         void (async () => {
             try {
                 const data: { visitorId: string; snapshot: Snapshot<T>; proof?: ConsentProof<T> } =
-                    { visitorId: await getVisitorId(), snapshot };
+                    { visitorId: await getVisitorId(true), snapshot };
                 if (secret) data.proof = await buildProofHmac(snapshot, secret);
                 await adapter.save(data);
             } catch (err) {
@@ -515,7 +522,9 @@ export function createConsentify<Cs extends readonly string[]>(
     if (adapter && isBrowser()) {
         void (async () => {
             try {
-                const visitorId = await getVisitorId();
+                const visitorId = await getVisitorId(false);
+                // First-time visitor (no stored id): nothing to load.
+                if (!visitorId && !init.visitorId) return;
                 const remote = await adapter.load(visitorId);
                 if (!remote || !isValidSnapshot<T>(remote)) return;
                 if (remote.policy !== policyHash) return;

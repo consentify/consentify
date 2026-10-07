@@ -50,7 +50,7 @@ Cloud mode uses four localStorage keys:
 
 | Key | Purpose | Lifetime | Content |
 |-----|---------|----------|---------|
-| `consentify_visitor` | Stable visitor identifier | Persistent (until the user clears site data) | Random UUID v4 or fallback generated at first use |
+| `consentify_visitor` | Visitor identifier for consent records (not used when you pass `visitorId`) | Created at the first `accept_all` or `customize` decision, never on page load. Deleted when the visitor chooses `reject_all`; otherwise kept until site data is cleared | Random UUID v4 (a `Math.random` fallback on browsers without Web Crypto) |
 | `consentify_event_buffer` | Retry buffer for failed events | Until next successful send | JSON: `{ url, body, apiKey? }` |
 | `consentify_last_event` | Deduplication key | Persistent | `siteId\|policyHash\|givenAt` to prevent re-reporting identical decisions |
 | `consentify_cfg_<siteId>` | SiteConfig cache | Overwritten on each refresh; fresh for `configTtlSec` (default 1 hour), then served stale while refreshing | JSON: `{ t, h, c }` - fetch time, config hash, and the site's public SiteConfig. No visitor data |
@@ -78,43 +78,50 @@ Each consent change is POSTed to `https://ingest.consentify.dev/v1/events` (or y
 
 - **action**: Derived from the decision: `accept_all` (all user categories granted), `reject_all` (none granted), `customize` (mixed or unset)
 - **categories**: Full snapshot of choices including `necessary` (always `true`)
-- **visitorHash**: Pseudonymous identifier - stable per-visitor, unrelated to personal data
+- **visitorHash**: Your `visitorId` if you set one. Otherwise the stored random id for `accept_all` and `customize`, and a one-off 8-character hex token for `reject_all` (see [Visitor ID](#visitor-id))
 - **policyVersion**: Hash of the policy definition; changes when categories change
 - **apiKey**: Only included if provided in the SDK config (for server-to-server auth)
 
 ## Visitor ID
 
-The visitor identifier can be controlled:
+The SDK resolves the identifier when it sends an event, not when the page loads.
+
+**Default (no `visitorId`):**
+
+- Before the first decision the SDK does not read or write `consentify_visitor`. A visitor who never decides gets no identifier. Retrying a buffered event does not create one either: the retry resends the stored payload as is.
+- `accept_all` or `customize`: the SDK reads `consentify_visitor`, creates a random UUID there if none exists, and sends it as `visitorHash`. Later events from the same browser carry the same id.
+- `reject_all`: the SDK deletes `consentify_visitor` if present and sends a one-off token of 8 random hex characters (for example `"3f9a0c1e"`) as `visitorHash`. The token is never stored, so every refusal gets a new one and cannot be linked to earlier or later events from that browser.
+- With an `adapter`, `adapter.save()` needs a key for every decision, so it creates `consentify_visitor` after any decision, `reject_all` included. On page load, `adapter.load()` runs only when an id is already stored.
+
+**Custom `visitorId`:**
 
 ```ts
 const fallback = { categories: ['analytics'], identifier: 'your-published-policy-identifier' };
 
-// Default: auto-generated UUID and persisted to localStorage
-const consent1 = await createCloudConsentify({ siteId: '...', fallback });
-
 // Custom string
-const consent2 = await createCloudConsentify({
+const consent = await createCloudConsentify({
   siteId: '...',
   fallback,
   visitorId: 'user-123',
 });
 
-// Custom factory (sync or async)
-const consent3 = await createCloudConsentify({
+// Custom factory (sync or async), e.g. the signed-in account
+const consent2 = await createCloudConsentify({
   siteId: '...',
   fallback,
-  visitorId: async () => {
-    const user = await fetchCurrentUser();
-    return user?.id || generateAnonymousId();
-  },
+  visitorId: async () => (await fetchCurrentUser()).id,
 });
 ```
 
-The ID is included in the `visitorHash` field of the event payload as a pseudonymous identifier for consent analytics.
+A custom `visitorId` is sent as `visitorHash` with every event, `reject_all` included, and is passed to the adapter. The SDK then never reads, creates or deletes `consentify_visitor`. The reporter calls a factory once per event; if the factory throws or rejects, that event carries a one-off token instead.
+
+### Legal basis
+
+The stored id lets a consent record be attributed to the same browser over time. GDPR requires the controller to be able to demonstrate that the user consented (Art. 7(1)) and to demonstrate compliance in general (accountability, Art. 5(2)). For that reason the reporter creates the id only once the visitor has granted at least one optional category, and uses it only in consent records. Refusals are reported without a persistent identifier: the stored id is deleted and the `reject_all` event carries a one-off token. A custom `visitorId`, and the key an `adapter` stores records under, are your own; choosing them, and having a legal basis for keeping them with consent records, is your responsibility.
 
 ## Reject All Is Reported
 
-Consent decisions are recorded for both acceptances and rejections. This is intentional - proof-of-consent requires documenting both grants and refusals for audit trails and compliance. The `action: reject_all` event proves the user refused optional categories on a given date.
+Consent decisions are recorded for both acceptances and rejections. This is intentional - proof-of-consent requires documenting both grants and refusals for audit trails and compliance. The `action: reject_all` event proves the user refused optional categories on a given date. Without a custom `visitorId` it carries a one-off token, not the visitor id (see [Visitor ID](#visitor-id)).
 
 ## No Bundled Tracking Scripts
 
@@ -138,14 +145,14 @@ If you use cloud mode, your privacy policy should mention:
 
 Example language:
 
-> "We use Consentify, a privacy-first consent management platform, to record your consent choices. A pseudonymous visitor identifier (UUID) is stored locally to prevent duplicate reporting. Consent decisions are sent to Consentify's servers for compliance and analytics purposes."
+> "We use Consentify, a privacy-first consent management platform, to record your consent choices. When you allow at least one optional category, a pseudonymous visitor identifier (UUID) is stored locally so your consent record can be attributed to this browser; it is deleted if you reject all optional categories. Consent decisions are sent to Consentify's servers for compliance and analytics purposes."
 
 ## Data Retention & Deletion
 
 The hosted platform is not live yet - retention policies will be documented when the service launches. Until then, assume:
 
 - Events are stored server-side for compliance auditing
-- Visitor IDs are stable (not automatically deleted)
+- A stored visitor ID stays in the browser until the visitor chooses `reject_all` or clears site data
 - No built-in user data deletion API yet
 
 ## Custom Endpoint

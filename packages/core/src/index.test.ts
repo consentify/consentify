@@ -2108,6 +2108,7 @@ describe('ConsentAdapter integration', () => {
             policy: { categories: ['analytics'] as const },
             adapter,
         });
+        expect(localStorage.getItem('consentify_visitor')).toBeNull();
         c.set({ analytics: true });
         await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
         expect(adapter._saved[0].visitorId).toBeTypeOf('string');
@@ -2153,6 +2154,36 @@ describe('ConsentAdapter integration', () => {
         await vi.waitFor(() => expect(adapter._saved.length).toBe(3));
         for (const saved of adapter._saved) expect(saved.visitorId).toBe('');
         expect(warn).toHaveBeenCalled();
+    });
+
+    it('skips adapter.load and mints no visitor id for a first-time visitor', async () => {
+        const adapter = makeAdapter();
+        const load = vi.spyOn(adapter, 'load');
+        createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+        });
+        await new Promise(r => setTimeout(r, 20));
+        expect(load).not.toHaveBeenCalled();
+        expect(localStorage.getItem('consentify_visitor')).toBeNull();
+    });
+
+    it('hydrates a returning visitor by the stored visitor id', async () => {
+        localStorage.setItem('consentify_visitor', 'returning-1');
+        const adapter = makeAdapter();
+        const load = vi.spyOn(adapter, 'load');
+        adapter._loaded = {
+            policy: hashPolicy(['analytics']),
+            givenAt: new Date().toISOString(),
+            choices: { necessary: true, analytics: true } as any,
+        };
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+        });
+        await vi.waitFor(() => expect(c.get().decision).toBe('decided'));
+        expect(load).toHaveBeenCalledWith('returning-1');
+        expect(localStorage.getItem('consentify_visitor')).toBe('returning-1');
     });
 });
 
@@ -2736,6 +2767,80 @@ describe('Cloud mode (Mode B)', () => {
         ).length;
         expect(secondIngestCount).toBe(firstIngestCount);
     });
+
+    // --- Visitor id: minted only after a decision, never for reject_all ---
+    const VISITOR_KEY = 'consentify_visitor';
+    const ingestBodies = (spy: ReturnType<typeof vi.fn>) =>
+        ingestCalls(spy).map(([, opts]) => JSON.parse((opts as RequestInit).body as string));
+    const cloud = (extra: { visitorId?: string | (() => Promise<string>) } = {}) =>
+        createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB, ...extra });
+
+    it('does not touch consentify_visitor before a decision, retry buffer included', async () => {
+        localStorage.setItem('consentify_event_buffer', JSON.stringify({ url: 'https://ingest.test/v1/events', body: '{}' }));
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        await cloud();
+        await vi.waitFor(() => expect(localStorage.getItem('consentify_event_buffer')).toBeNull());
+        expect(ingestCalls(spy)).toHaveLength(1); // the replayed buffer only
+        expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
+    });
+
+    it('mints the stored visitor id on the first accept and reports it', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await cloud();
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        const stored = localStorage.getItem(VISITOR_KEY);
+        expect(stored).toMatch(/^[0-9a-f-]{36}$/);
+        expect(ingestBodies(spy)[0]).toMatchObject({ action: 'accept_all', visitorHash: stored });
+    });
+
+    it('reject_all reports an 8-hex one-off token and deletes the stored id', async () => {
+        localStorage.setItem(VISITOR_KEY, 'earlier-accept-id');
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await cloud();
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        const body = ingestBodies(spy)[0];
+        expect(body.action).toBe('reject_all');
+        expect(body.visitorHash).toMatch(/^[0-9a-f]{8}$/);
+        expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
+    });
+
+    it('two reject_all events carry different tokens', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await cloud();
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        vi.setSystemTime(t0 + 60_000);
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
+        const [a, b] = ingestBodies(spy);
+        expect(b.action).toBe('reject_all');
+        expect(b.visitorHash).toMatch(/^[0-9a-f]{8}$/);
+        expect(a.visitorHash).not.toBe(b.visitorHash);
+        expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
+    });
+
+    for (const [kind, visitorId] of [['string', 'acct-42'], ['factory', async () => 'acct-42']] as const) {
+        it(`reports an explicit ${kind} visitorId for accept and reject alike`, async () => {
+            const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+            const c = await cloud({ visitorId });
+            const t0 = Date.now();
+            vi.setSystemTime(t0);
+            c.set({ analytics: true });
+            await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+            vi.setSystemTime(t0 + 60_000);
+            c.set({ analytics: false });
+            await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
+            expect(ingestBodies(spy).map(b => [b.action, b.visitorHash])).toEqual([
+                ['accept_all', 'acct-42'],
+                ['reject_all', 'acct-42'],
+            ]);
+            expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
+        });
+    }
 });
 
 // ============================================================

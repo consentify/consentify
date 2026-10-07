@@ -441,17 +441,6 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         return s;
     };
 
-    // `prev` is passed in instead of re-read — the caller has already decoded
-    // it once on the write path, and `readClient()` is non-trivial
-    // (decodeURIComponent + JSON.parse + isValidSnapshot). `prev.policy` is
-    // guaranteed to equal `next.policy` (both equal `policyHash`), so only
-    // compare choices.
-    const writeClientIfChanged = (prev: Snapshot<T> | null, next: Snapshot<T>): boolean => {
-        const same = !!(prev && JSON.stringify(prev.choices) === JSON.stringify(next.choices));
-        if (!same) writeClientRaw(enc(next));
-        return !same;
-    };
-
     // ---- server API
     const server = {
         get: (cookieHeader: string | null | undefined): ConsentState<T> => {
@@ -657,6 +646,8 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     const client = {
         get: clientGet,
 
+        // An explicit set() is always a new decision: even identical choices
+        // are re-written with a fresh `givenAt` (matches `server.set`).
         set: (choices: Partial<Choices<T>>) => {
             const from = cachedState;
             const fresh = readClient();
@@ -666,14 +657,13 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
                 givenAt: toISO(),
                 choices: normalize({ ...base, ...choices }),
             };
-            if (writeClientIfChanged(fresh, next)) {
-                setCachedSnapshot(next);
-                notifyListeners();
-                emit('change', { from, to: cachedState, timestamp: Date.now() });
-                checkExpiring();
-                bc?.postMessage(null);
-                runAdapterSave(next);
-            }
+            writeClientRaw(enc(next));
+            setCachedSnapshot(next);
+            notifyListeners();
+            emit('change', { from, to: cachedState, timestamp: Date.now() });
+            checkExpiring();
+            bc?.postMessage(null);
+            runAdapterSave(next);
         },
 
         clear: () => {

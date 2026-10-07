@@ -61,7 +61,7 @@ Two public entries:
 - `src/index.ts` (`@consentify/core`): the self-hosted `createConsentify()` factory and re-exports. It never imports `internal/cloud`; passing `siteId` is a type error and throws `ConsentifyConfigError` at runtime.
 - `src/cloud.ts` (`@consentify/core/cloud`): `createCloudConsentify()` (async; fetches SiteConfig, builds the instance via `createConsentify`, starts reporting in the browser) plus the `CloudInit` / `SiteConfig` types.
 
-The ESM build bundles both entries in one esbuild call with `--splitting`, so shared core code lands once in a `dist/chunk-*.js` and `ConsentifyConfigError` stays a single class across entries (never build them as separate self-contained bundles). Implementation lives in `src/internal/` (`types`, `util`, `cookie`, `crypto`, `visitor`, `cloud`, `gcm`, `debug`). The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use; the `consent.server` and `consent.client` namespaces remain available for explicit access.
+The ESM build bundles both entries in one esbuild call with `--splitting`, so shared core code lands once in a `dist/chunk-*.js` and `ConsentifyConfigError` stays a single class across entries (never build them as separate self-contained bundles). Implementation lives in `src/internal/` (`types`, `util`, `cookie`, `crypto`, `visitor`, `cloud`, `gcm`, `debug`). The instance exposes a **flat top-level API** (`consent.get()`, `consent.set()`, `consent.guard()`, etc.) overloaded for both client and server use: a trailing options object (`{ cookieHeader }`, type `ServerOptions`) switches a call to server mode, e.g. `consent.set(choices, { cookieHeader })`. The `consent.server` and `consent.client` namespaces remain available for explicit access.
 
 - **Server signatures**: Take/return raw `Cookie` / `Set-Cookie` header strings (Node.js compatible, no DOM)
 - **Client signatures**: Browser-side storage with React `useSyncExternalStore` support via `subscribe()` and `getServerSnapshot()`
@@ -72,10 +72,10 @@ Key design patterns:
 - Storage abstraction supports cookie (canonical) and localStorage (optional mirror)
 - State uses discriminated union: `{ decision: 'unset' }` | `{ decision: 'decided', snapshot }`
 - Typed event system: `on(type, handler)` / `once(type, handler)` for events `'change' | 'clear' | 'expiring'`; emits after `notifyListeners`. Cross-tab changes (BroadcastChannel) also emit `'change'`/`'clear'`.
-- `guard(category, onGrant, onRevoke?)` - headline integration primitive: runs `onGrant` immediately if consented or once consent is granted, optionally runs `onRevoke` on revocation. Returns a dispose function. Prefer this over hand-rolled `subscribe()` + `isGranted()` loops.
+- `guard(category, onGrant, onRevoke?)` - headline integration primitive: runs `onGrant` immediately if consented or once consent is granted. With `onRevoke` it re-arms after every revoke until disposed; without it, it is one-shot. Returns a dispose function. Prefer this over hand-rolled `subscribe()` + `isGranted()` loops.
 - `enableDebug(instance)` - tree-shakeable debug adapter that logs consent changes via event system
 - `acceptAll()` / `rejectAll()` - convenience methods that set all user categories at once
-- `getProof()` - returns `ConsentProof` with FNV1a signature for audit trails
+- `getProof({ cookieHeader })` - HMAC-SHA256 signed `ConsentProof`; exists only on instances created with a server-only `secret` (no unsigned fallback since v3)
 - `mode: 'opt-in' | 'opt-out'` - GDPR opt-in (deny by default) vs CCPA opt-out (grant by default)
 - `expirationWarningDays` + `'expiring'` event - fires when consent is near expiry
 
@@ -83,7 +83,7 @@ Key design patterns:
 - `internal/types.ts` - public types and `ConsentifyConfigError`
 - `internal/util.ts` - `fnv1a()` / `stableStringify()` / `hashPolicy()` (deterministic policy hashing), `enc`/`dec`, `isBrowser()`, `isValidSnapshot()`, log helpers
 - `internal/cookie.ts` - `readCookie()` / `writeCookie()` / `buildSetCookieHeader()` (isomorphic cookie handling), exported `parseSetCookie()` for framework cookie setters
-- `internal/crypto.ts` - FNV1a / HMAC-SHA256 proofs, `verifyProof()`
+- `internal/crypto.ts` - HMAC-SHA256 proofs, `verifyProof()`
 - `internal/visitor.ts` - visitor ID resolution; `internal/cloud.ts` - cloud-mode config fetch and event reporting
 - `internal/gcm.ts` - `enableConsentMode()`; `internal/debug.ts` - `enableDebug()`
 - In the factory (`src/index.ts`): listener pattern for React reactivity (`listeners` Set, `syncState`, `notifyListeners`) and event emitter (`eventHandlers` Map) - lightweight typed emitter for `on`/`once`, emits after `notifyListeners`

@@ -56,7 +56,16 @@ export type StorageKind = 'cookie' | 'localStorage';
 /** Consent mode */
 export type ConsentMode = 'opt-in' | 'opt-out';
 
-/** Signed consent proof payload. */
+/**
+ * Passing this object to a flat instance method (`get`, `isGranted`, `set`,
+ * `clear`, `acceptAll`, `rejectAll`) selects server mode. `cookieHeader` is
+ * the raw request `Cookie` header; missing, empty or null means no cookie.
+ */
+export interface ServerOptions {
+    cookieHeader?: string | null;
+}
+
+/** HMAC-SHA256 signed consent proof payload. */
 export interface ConsentProof<T extends UserCategory> {
     policy: string;
     givenAt: string;
@@ -115,7 +124,11 @@ export interface ConsentAdapter<T extends UserCategory = UserCategory> {
     save(data: {
         visitorId: string;
         snapshot: Snapshot<T>;
-        proof: ConsentProof<T>;
+        /**
+         * HMAC-SHA256 proof of `snapshot`. Present only when the instance was
+         * created with a `secret` (server side); browser instances have none.
+         */
+        proof?: ConsentProof<T>;
     }): Promise<void>;
     load(visitorId: string): Promise<Snapshot<T> | null>;
 }

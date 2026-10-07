@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { ConsentifySubscribable, ConsentState } from '@consentify/core';
-import { useConsentify } from './index';
+import { createConsentify, useConsentify } from './index';
 
 type TestCategory = 'analytics' | 'marketing';
 
@@ -131,5 +131,23 @@ describe('useConsentify with category overload', () => {
 
         act(() => instance.setState(decidedState));
         expect(result.current).toBe(true);
+    });
+});
+
+describe('useConsentify with a real instance', () => {
+    afterEach(() => { document.cookie = 'consentify=; Max-Age=0; Path=/'; });
+
+    it('reads client state through get() and re-renders on set()', () => {
+        const consent = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const state = renderHook(() => useConsentify(consent));
+        const granted = renderHook(() => useConsentify(consent, 'analytics'));
+        expect(state.result.current).toEqual({ decision: 'unset' });
+        expect(granted.result.current).toBe(false);
+
+        act(() => consent.set({ analytics: true }));
+
+        expect(state.result.current.decision).toBe('decided');
+        expect(granted.result.current).toBe(true);
+        consent.destroy();
     });
 });

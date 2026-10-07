@@ -29,7 +29,7 @@ export function buildSetCookieHeader(name: string, value: string, opt: CookieOpt
  * lowercased name and values containing `=` are not supported.
  *
  * @example Next.js Server Action
- * const { name, value, options } = parseSetCookie(consent.acceptAll(cookieStore.toString()));
+ * const { name, value, options } = parseSetCookie(consent.acceptAll({ cookieHeader: cookieStore.toString() }));
  * cookieStore.set(name, value, options);
  */
 export function parseSetCookie(header: string): {

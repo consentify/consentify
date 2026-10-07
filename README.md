@@ -158,7 +158,7 @@ import { Analytics } from '../components/Analytics';
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
-  const state = consent.get(cookieStore.toString());
+  const state = consent.get({ cookieHeader: cookieStore.toString() });
 
   return (
     <html>
@@ -179,8 +179,7 @@ import { consent } from '../../../lib/consent';
 
 export async function POST(request: Request) {
   const { choices } = await request.json();
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const setCookie = consent.set(choices, cookieHeader);
+  const setCookie = consent.set(choices, { cookieHeader: request.headers.get('cookie') });
 
   const res = NextResponse.json({ ok: true });
   res.headers.append('Set-Cookie', setCookie);
@@ -188,7 +187,7 @@ export async function POST(request: Request) {
 }
 ```
 
-`getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
+Passing an options object (`{ cookieHeader }`) switches `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` to server mode; a missing or `null` header means no consent yet. `getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
 
 ## Google Consent Mode v2
 
@@ -211,7 +210,7 @@ See [Google Consent Mode v2 in the API reference](./docs/guides/api-reference.md
 
 ## Full API Reference
 
-The primary APIs above cover most integrations. For tables, the `server` / `client` namespaces, typed events, `getProof` details, custom adapters, cloud reporting, IIFE + CSP/SRI guidance, and everything else, see:
+The primary APIs above cover most integrations. For tables, the `server` / `client` namespaces, typed events, signed proofs (`getProof`, server-only), custom adapters, cloud reporting, IIFE + CSP/SRI guidance, and everything else, see:
 
 - **[API Reference](./docs/guides/api-reference.md)** — every method, option, and type
 - **[Next.js Guide](./docs/guides/nextjs.md)** — App Router, Server Components, Route Handlers

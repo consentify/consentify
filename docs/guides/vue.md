@@ -125,8 +125,8 @@ For Nuxt SSR, initialize state client-side and use the server API for reading co
 ```ts
 // middleware/consent.ts (Nuxt)
 export default defineEventHandler(async (event) => {
-  const cookieHeader = getHeader(event, 'cookie') ?? '';
-  const state = consent.get(cookieHeader);
+  const cookieHeader = getHeader(event, 'cookie');
+  const state = consent.get({ cookieHeader });
   event.node.res.setHeader('x-consent-decided', state.decision);
 });
 ```

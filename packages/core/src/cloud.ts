@@ -148,6 +148,7 @@ export async function createCloudConsentify(
             siteId: init.siteId,
             apiKey: init.apiKey,
             ingestEndpoint: init.endpoints?.ingest ?? DEFAULT_INGEST_ENDPOINT,
+            visitorId: init.visitorId,
         });
     }
     return Object.assign(instance, { cloud: { source, config: siteCfg } });

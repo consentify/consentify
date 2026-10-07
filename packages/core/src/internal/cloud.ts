@@ -1,6 +1,6 @@
-import type { ConsentMode, ConsentState, UserCategory } from './types';
+import type { ConsentMode, ConsentState, UserCategory, VisitorIdSource } from './types';
 import { canLocalStorage, isBrowser, logW } from './util';
-import { generateVisitorId, readOrCreateStoredVisitorId } from './visitor';
+import { dropStoredVisitorId, ephemeralVisitorId, readOrCreateStoredVisitorId, resolveVisitorId } from './visitor';
 
 /**
  * Site configuration published to the CDN. Fields beyond these pass through
@@ -76,6 +76,8 @@ export interface StartCloudReportingOptions {
     siteId: string;
     apiKey?: string;
     ingestEndpoint: string;
+    /** Integrator-supplied id; when set it is sent with every event. */
+    visitorId?: VisitorIdSource;
 }
 
 /**
@@ -115,7 +117,18 @@ export function startCloudReporting<T extends UserCategory>(
     const pending = readPendingEvent();
     if (pending) void postCloudEvent(pending).finally(dropEvent);
 
-    const visitorHash = canLocalStorage() ? readOrCreateStoredVisitorId() : generateVisitorId();
+    // The visitor id is resolved per event, at send time, so nothing touches
+    // `consentify_visitor` before the first decision (the retry buffer above
+    // replays a finished body). An explicit `visitorId` is the integrator's
+    // own identifier and is always sent. Otherwise accept/customize mints or
+    // reuses the stored id, and reject_all deletes it and sends a one-off
+    // token, so a refusal is never linked to a persistent id.
+    const resolveId = async (action: CloudAction): Promise<string> => {
+        if (opts.visitorId) return resolveVisitorId(opts.visitorId);
+        if (action !== 'reject_all') return readOrCreateStoredVisitorId();
+        dropStoredVisitorId();
+        return ephemeralVisitorId();
+    };
 
     const send = (state: ConsentState<T>): void => {
         if (state.decision !== 'decided') return;
@@ -124,18 +137,24 @@ export function startCloudReporting<T extends UserCategory>(
         if (key === lastKey || key === lastKeyStore()) return;
         lastKey = key;
         lastKeyStore(key);
-        // Payload key is `visitorHash` to match the ingest-endpoint contract;
-        // the SDK config calls it `visitorId` everywhere else.
-        const body = JSON.stringify({
-            siteId: opts.siteId,
-            action: deriveCloudAction(state, userCats),
-            categories: state.snapshot.choices,
-            visitorHash,
-            policyVersion: state.snapshot.policy,
-            ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
-        });
-        const evt: BufferedEvent = { url, body, apiKey: opts.apiKey };
+        const action = deriveCloudAction(state, userCats);
         void (async () => {
+            // A failing `visitorId` factory falls back to a one-off token.
+            const visitorHash = await resolveId(action).catch(err => {
+                logW('visitorId failed:', err);
+                return ephemeralVisitorId();
+            });
+            // Payload key is `visitorHash` to match the ingest-endpoint contract;
+            // the SDK config calls it `visitorId` everywhere else.
+            const body = JSON.stringify({
+                siteId: opts.siteId,
+                action,
+                categories: state.snapshot.choices,
+                visitorHash,
+                policyVersion: state.snapshot.policy,
+                ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
+            });
+            const evt: BufferedEvent = { url, body, apiKey: opts.apiKey };
             const ok = await postCloudEvent(evt);
             if (ok) dropEvent(); else savePendingEvent(evt);
         })();

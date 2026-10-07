@@ -22,7 +22,7 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `expirationWarningDays` | `number` | `30` | Days before expiry to emit `'expiring'` event |
 | `storage` | `StorageKind[]` | `['cookie']` | Client storage priority (`'cookie'`, `'localStorage'`) |
 | `secret` | `string` | — | Server-only. Adds an async, HMAC-SHA256 signed `getProof()` and passes a signed `proof` to `adapter.save()`. Throws `ConsentifyConfigError` in a browser |
-| `visitorId` | `string \| () => string \| Promise<string>` | auto | Stable visitor ID for adapters / cloud mode |
+| `visitorId` | `string \| () => string \| Promise<string>` | auto | Visitor ID for the adapter and cloud events. When set, it is used for every decision, `reject_all` included. Default: a random id in localStorage (`consentify_visitor`), created only after a decision (`adapter.save()`, cloud `accept_all` / `customize`); a cloud `reject_all` deletes it and sends a one-off token. See [visitor ID](./cloud-privacy.md#visitor-id) |
 | `adapter` | `ConsentAdapter<T>` | — | Custom persistence backend |
 
 `createConsentify` is self-hosted only. Cloud mode lives in [`createCloudConsentify`](#createcloudconsentifyinit--consentifycorecloud) from `@consentify/core/cloud`; passing `siteId` here is a type error and throws `ConsentifyConfigError` at runtime.
@@ -400,7 +400,7 @@ const consent = createConsentify({
 });
 ```
 
-`save` is awaited on every `set()` / `acceptAll()` / `rejectAll()`. `load` is called on startup to hydrate state for the current `visitorId`.
+`save` is awaited on every `set()` / `acceptAll()` / `rejectAll()`. `load` is called on startup to hydrate state for the current `visitorId`; without an explicit `visitorId` it is skipped until an id is stored (a first-time visitor has nothing to load).
 
 ## Policy Versioning
 

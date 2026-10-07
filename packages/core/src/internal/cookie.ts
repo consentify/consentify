@@ -6,12 +6,14 @@ export type CookieOpt = {
     secure: boolean;
     path: string;
     domain?: string;
+    partitioned?: boolean;
 };
 
 export function buildSetCookieHeader(name: string, value: string, opt: CookieOpt): string {
     let h = `${name}=${value}; Path=${opt.path}; Max-Age=${opt.maxAgeSec}; SameSite=${opt.sameSite}`;
     if (opt.domain) h += `; Domain=${opt.domain}`;
     if (opt.secure) h += `; Secure`;
+    if (opt.partitioned) h += `; Partitioned`;
     return h;
 }
 

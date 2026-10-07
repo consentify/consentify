@@ -11,12 +11,13 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `policy.categories` | `readonly string[]` | *required* | Consent categories (e.g., `['analytics', 'marketing']`) |
 | `policy.identifier` | `string` | auto-hash | Stable policy version key. Changing it invalidates existing consent |
 | `cookie.name` | `string` | `'consentify'` | Cookie name |
-| `cookie.maxAgeSec` | `number` | `31536000` (1 year) | Cookie max-age in seconds |
+| `cookie.maxAgeSec` | `number` | `consentMaxAgeDays * 86400` if set, else `31536000` (1 year) | Cookie max-age in seconds. An explicit value always wins |
 | `cookie.sameSite` | `'Lax' \| 'Strict' \| 'None'` | `'Lax'` | SameSite attribute |
-| `cookie.secure` | `boolean` | `true` | Secure flag (forced `true` when `sameSite: 'None'`) |
+| `cookie.secure` | `boolean` | `true` | Secure flag (forced `true` when `sameSite: 'None'` or `partitioned: true`) |
 | `cookie.path` | `string` | `'/'` | Cookie path |
 | `cookie.domain` | `string` | — | Cookie domain |
-| `consentMaxAgeDays` | `number` | - | Auto-expire consent after N days |
+| `cookie.partitioned` | `boolean` | `false` | Adds the CHIPS `Partitioned` attribute (forces `Secure`). Use when the SDK runs in an embedded / third-party iframe |
+| `consentMaxAgeDays` | `number` | - | Auto-expire consent after N days. Also sets the cookie Max-Age unless `cookie.maxAgeSec` is given |
 | `mode` | `'opt-in' \| 'opt-out'` | `'opt-in'` | GDPR opt-in (deny by default) or CCPA opt-out (grant by default) |
 | `expirationWarningDays` | `number` | `30` | Days before expiry to emit `'expiring'` event |
 | `storage` | `StorageKind[]` | `['cookie']` | Client storage priority (`'cookie'`, `'localStorage'`) |

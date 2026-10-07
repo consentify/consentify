@@ -85,12 +85,17 @@ export { enableDebug, type EnableDebugOptions } from './internal/debug';
 export interface CreateConsentifyInit<Cs extends readonly string[]> {
     policy: { categories: Cs, identifier?: string };
     cookie?: {
-        name?: string; maxAgeSec?: number; sameSite?: 'Lax'|'Strict'|'None';
+        name?: string; sameSite?: 'Lax'|'Strict'|'None';
         secure?: boolean; path?: string; domain?: string;
+        /** Cookie Max-Age in seconds. Default: `consentMaxAgeDays * 86400` when that is set, otherwise one year. */
+        maxAgeSec?: number;
+        /** Adds the CHIPS `Partitioned` attribute (forces `Secure`). For embedded / third-party iframe contexts. */
+        partitioned?: boolean;
     };
     /**
      * Maximum age of consent in days. If set, consent older than this
-     * will be treated as expired, requiring re-consent.
+     * will be treated as expired, requiring re-consent. Also sets the cookie
+     * Max-Age unless `cookie.maxAgeSec` is given.
      */
     consentMaxAgeDays?: number;
     /**
@@ -349,15 +354,18 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
     const policyHash = init.policy.identifier ?? hashPolicy(init.policy.categories);
     const cookieName = init.cookie?.name ?? DEFAULT_COOKIE;
     const sameSite = init.cookie?.sameSite ?? 'Lax';
+    const partitioned = init.cookie?.partitioned;
+    const consentMaxAgeDays = init.consentMaxAgeDays;
     const cookieCfg: CookieOpt = {
         path: init.cookie?.path ?? '/',
-        maxAgeSec: init.cookie?.maxAgeSec ?? 60 * 60 * 24 * 365,
+        // Cookie lifetime follows consent lifetime unless set explicitly; default one year.
+        maxAgeSec: init.cookie?.maxAgeSec ?? (consentMaxAgeDays || 365) * 86400,
         sameSite,
-        secure: sameSite === 'None' ? true : (init.cookie?.secure ?? true),
+        secure: sameSite === 'None' || partitioned ? true : (init.cookie?.secure ?? true),
         domain: init.cookie?.domain,
+        partitioned,
     };
     const storageOrder: StorageKind[] = (init.storage && init.storage.length > 0) ? init.storage : ['cookie'];
-    const consentMaxAgeDays = init.consentMaxAgeDays;
     const mode: ConsentMode = init.mode ?? 'opt-in';
     const expirationWarningDays = init.expirationWarningDays ?? 30;
     if (consentMaxAgeDays && expirationWarningDays >= consentMaxAgeDays) {

@@ -25,6 +25,7 @@ describe('generateConsentConfig', () => {
         expect(out).not.toContain(`enableCloud`);
         expect(out).toContain(`mode: 'opt-in'`);
         expect(out).toContain(`categories: ['analytics', 'marketing']`);
+        expect(out).not.toContain(`@consentify/core/cloud`);
     });
 
     it('emits opt-out when selected', () => {
@@ -44,14 +45,23 @@ describe('generateConsentConfig', () => {
         expect(out).not.toMatch(/defaults\s*:/);
     });
 
-    it('wires SaaS via Mode B with Next.js-style env prefix', () => {
+    it('wires SaaS via @consentify/core/cloud with Next.js-style env prefix', () => {
         const out = generateConsentConfig(ctx({ useSaas: true, siteId: 'site_abc' }));
         expect(out).not.toContain(`@consentify/cloud`);
         expect(out).not.toContain(`enableCloud`);
-        expect(out).toContain(`import { createConsentify } from '@consentify/core';`);
-        expect(out).toContain(`await createConsentify({`);
+        expect(out).toContain(`import { createCloudConsentify } from '@consentify/core/cloud';`);
+        expect(out).not.toContain(`from '@consentify/core';`);
+        expect(out).toContain(`await createCloudConsentify({`);
+        expect(out).not.toContain(`createConsentify(`);
         expect(out).toContain(`siteId: process.env.NEXT_PUBLIC_CONSENTIFY_SITE_ID!`);
         expect(out).toContain(`apiKey: process.env.NEXT_PUBLIC_CONSENTIFY_API_KEY`);
+    });
+
+    it('imports enableConsentMode from core alongside the cloud factory', () => {
+        const out = generateConsentConfig(ctx({ useSaas: true, enableGcm: true }));
+        expect(out).toContain(`import { enableConsentMode } from '@consentify/core';`);
+        expect(out).toContain(`import { createCloudConsentify } from '@consentify/core/cloud';`);
+        expect(out).toContain(`enableConsentMode(consent, {`);
     });
 
     it('uses VITE_ prefix for vite-react', () => {
@@ -103,6 +113,15 @@ describe('generateVanillaConfig', () => {
         }));
         expect(out).toContain(`siteId: 'site_xyz'`);
         expect(out).not.toContain(`process.env`);
+        expect(out).toContain(`import { createCloudConsentify } from '@consentify/core/cloud';`);
+        expect(out).toContain(`await createCloudConsentify({`);
+        expect(out).not.toContain(`createConsentify(`);
+    });
+
+    it('imports createConsentify from core when self-hosted', () => {
+        const out = generateVanillaConfig(ctx({ framework: 'vanilla', enableGcm: true }));
+        expect(out).toContain(`import { createConsentify, enableConsentMode } from '@consentify/core';`);
+        expect(out).not.toContain(`@consentify/core/cloud`);
     });
 
     it('checks decision against unset, not pending', () => {

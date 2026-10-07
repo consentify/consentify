@@ -1,3 +1,4 @@
+import { sdkImports } from './consent-config.js';
 import { formatGcmMapping } from './gcm-mapping.js';
 import type { TemplateContext } from './types.js';
 
@@ -14,7 +15,7 @@ ${formatGcmMapping(ctx.categories, '        ')}
 });`
         : '';
 
-    const imports = `import { createConsentify${ctx.enableGcm ? ', enableConsentMode' : ''} } from '@consentify/core';`;
+    const imports = sdkImports(ctx);
 
     if (ctx.useSaas) {
         const siteId = ctx.siteId ?? 'your-site-id-here';
@@ -23,7 +24,7 @@ ${formatGcmMapping(ctx.categories, '        ')}
 
 // SaaS mode: categories + policy version are fetched from consentify.dev on init.
 // Top-level await requires ESM ("type": "module") - standard for modern toolchains.
-export const consent = await createConsentify({
+export const consent = await createCloudConsentify({
     siteId: '${siteId}',${apiKeyLine}
     mode: '${ctx.mode}',
 });

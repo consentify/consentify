@@ -1,10 +1,14 @@
 import { formatGcmMapping } from './gcm-mapping.js';
 import { envPrefix, type TemplateContext } from './types.js';
 
-function coreImports(ctx: TemplateContext): string {
-    const names = ['createConsentify'];
+// SaaS mode imports its factory from the `@consentify/core/cloud` subpath so
+// self-hosted bundles never ship the cloud client.
+export function sdkImports(ctx: TemplateContext): string {
+    const names = ctx.useSaas ? [] : ['createConsentify'];
     if (ctx.enableGcm) names.push('enableConsentMode');
-    return `import { ${names.join(', ')} } from '@consentify/core';`;
+    const lines = names.length ? [`import { ${names.join(', ')} } from '@consentify/core';`] : [];
+    if (ctx.useSaas) lines.push(`import { createCloudConsentify } from '@consentify/core/cloud';`);
+    return lines.join('\n');
 }
 
 function categoriesLiteral(categories: readonly string[]): string {
@@ -26,10 +30,10 @@ ${formatGcmMapping(ctx.categories)}
 }
 
 export function generateConsentConfig(ctx: TemplateContext): string {
-    const header = coreImports(ctx);
+    const header = sdkImports(ctx);
 
     if (ctx.useSaas) {
-        // Mode B (SaaS): createConsentify becomes async and fetches SiteConfig
+        // SaaS: createCloudConsentify is async and fetches SiteConfig
         // from the CDN. `policy.categories` comes from the dashboard; local
         // overrides (`mode`) take precedence over the fetched config.
         const prefix = envPrefix(ctx.framework);
@@ -42,7 +46,7 @@ export function generateConsentConfig(ctx: TemplateContext): string {
         const body = `
 // SaaS mode: categories + policy version are fetched from consentify.dev on init.
 // Top-level await requires ESM ("type": "module") - standard for modern toolchains.
-export const consent = await createConsentify({
+export const consent = await createCloudConsentify({
     siteId: ${siteIdExpr},
     apiKey: ${apiKeyExpr},
     mode: '${ctx.mode}',

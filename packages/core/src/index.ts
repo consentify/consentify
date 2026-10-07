@@ -31,12 +31,6 @@ import {
 import { buildProofFnv1a, buildProofHmac } from './internal/crypto';
 import { resolveVisitorId } from './internal/visitor';
 import {
-    DEFAULT_CONFIG_ENDPOINT,
-    DEFAULT_INGEST_ENDPOINT,
-    fetchSiteConfig,
-    startCloudReporting,
-} from './internal/cloud';
-import {
     MS_PER_DAY,
     TAG,
     canLocalStorage,
@@ -135,33 +129,6 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
      * `consentify_visitor`. On the server this falls back to an empty string
      * unless explicitly provided.
      */
-    visitorId?: VisitorIdSource;
-}
-
-/**
- * Init variant for SaaS / cloud mode. When `siteId` is present, the factory
- * becomes async: it fetches a SiteConfig from the CDN, derives `policy` and
- * `mode` from it, and auto-enables cloud event reporting to the ingest
- * endpoint. Local overrides take precedence over values from the fetched
- * SiteConfig.
- */
-export interface CloudInit {
-    siteId: string;
-    apiKey?: string;
-    endpoints?: { config?: string; ingest?: string };
-    cookie?: CreateConsentifyInit<readonly string[]>['cookie'];
-    mode?: ConsentMode;
-    consentMaxAgeDays?: number;
-    expirationWarningDays?: number;
-    storage?: StorageKind[];
-    secret?: string;
-    /**
-     * Custom storage backend. In cloud mode the category union is only known
-     * after the SiteConfig fetch, so adapters here use the default string
-     * union. Narrow by writing `ConsentAdapter<'analytics' | 'marketing'>`
-     * explicitly if you want a tighter type.
-     */
-    adapter?: ConsentAdapter;
     visitorId?: VisitorIdSource;
 }
 
@@ -273,7 +240,7 @@ export interface ConsentifyAsyncInstance<Cs extends readonly string[]>
     };
 }
 
-// --- Unified Factory (single entry point) -----------------------------------
+// --- Factory (self-hosted; cloud mode is in `@consentify/core/cloud`) -----
 /**
  * Self-hosted mode with HMAC-SHA256 proofs: `secret` is set. Returns an
  * instance whose `getProof()` is async. Server-only — passing `secret` in a
@@ -289,66 +256,14 @@ export function createConsentify<Cs extends readonly string[]>(
 export function createConsentify<Cs extends readonly string[]>(
     init: CreateConsentifyInit<Cs> & { siteId?: never },
 ): ConsentifyInstance<Cs>;
-/**
- * Cloud / SaaS mode with HMAC-SHA256 proofs: `secret` is set. Server-only.
- * Returns an async instance whose `getProof()` is HMAC-signed.
- */
-export function createConsentify(
-    init: CloudInit & { policy?: never; secret: string },
-): Promise<ConsentifyAsyncInstance<readonly string[]>>;
-/**
- * Cloud / SaaS mode: async factory that fetches SiteConfig from the CDN and
- * auto-enables event reporting to the ingest endpoint.
- */
-export function createConsentify(
-    init: CloudInit & { policy?: never },
-): Promise<ConsentifyInstance<readonly string[]>>;
-export function createConsentify(
-    init: CreateConsentifyInit<readonly string[]> | CloudInit,
-): ConsentifyInstance<readonly string[]>
-   | ConsentifyAsyncInstance<readonly string[]>
-   | Promise<ConsentifyInstance<readonly string[]> | ConsentifyAsyncInstance<readonly string[]>> {
-    if ('siteId' in init && typeof (init as CloudInit).siteId === 'string') {
-        return createCloudInstance(init as CloudInit);
-    }
-    return createSelfHostedInstance(init as CreateConsentifyInit<readonly string[]>);
-}
-
-async function createCloudInstance(
-    init: CloudInit,
-): Promise<ConsentifyInstance<readonly string[]> | ConsentifyAsyncInstance<readonly string[]>> {
-    const configEndpoint = init.endpoints?.config ?? DEFAULT_CONFIG_ENDPOINT;
-    const ingestEndpoint = init.endpoints?.ingest ?? DEFAULT_INGEST_ENDPOINT;
-    const siteCfg = await fetchSiteConfig(init.siteId, configEndpoint);
-    const merged: CreateConsentifyInit<readonly string[]> = {
-        policy: {
-            categories: siteCfg.categories,
-            identifier: siteCfg.policyIdentifier,
-        },
-        cookie: init.cookie,
-        mode: init.mode ?? siteCfg.mode,
-        consentMaxAgeDays: init.consentMaxAgeDays ?? siteCfg.consentMaxAgeDays,
-        expirationWarningDays: init.expirationWarningDays,
-        storage: init.storage,
-        secret: init.secret,
-        adapter: init.adapter,
-        visitorId: init.visitorId,
-    };
-    const instance = createSelfHostedInstance(merged);
-    if (isBrowser()) {
-        startCloudReporting(instance, {
-            siteId: init.siteId,
-            apiKey: init.apiKey,
-            ingestEndpoint,
-        });
-    }
-    return instance;
-}
-
-function createSelfHostedInstance<Cs extends readonly string[]>(
+export function createConsentify<Cs extends readonly string[]>(
     init: CreateConsentifyInit<Cs>,
 ): ConsentifyInstance<Cs> | ConsentifyAsyncInstance<Cs> {
     type T = ArrToUnion<Cs>;
+    // Cloud mode lives in its own entry so self-hosted bundles never ship it.
+    if ((init as { siteId?: unknown }).siteId) {
+        throw new ConsentifyConfigError(TAG + 'siteId: use @consentify/core/cloud');
+    }
     if (init.secret && isBrowser()) {
         throw new ConsentifyConfigError(TAG + '`secret` is server-only');
     }

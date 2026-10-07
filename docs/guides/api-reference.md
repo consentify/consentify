@@ -24,10 +24,8 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `secret` | `string` | — | Enables HMAC-SHA256 signed `getProof()`. Highly recommended |
 | `visitorId` | `string \| () => string \| Promise<string>` | auto | Stable visitor ID for adapters / cloud mode |
 | `adapter` | `ConsentAdapter<T>` | — | Custom persistence backend |
-| `siteId` | `string` | — | Cloud mode: auto-fetch SiteConfig + enable cloud reporting. Returns `Promise` |
-| `apiKey` | `string` | — | Cloud mode: API key |
-| `endpoints.config` | `string` | `cdn.consentify.dev` | Cloud mode: SiteConfig CDN |
-| `endpoints.ingest` | `string` | `ingest.consentify.dev` | Cloud mode: ingest endpoint |
+
+`createConsentify` is self-hosted only. Cloud mode lives in [`createCloudConsentify`](#createcloudconsentifyinit--consentifycorecloud) from `@consentify/core/cloud`; passing `siteId` here is a type error and throws `ConsentifyConfigError` at runtime.
 
 ## Flat API (primary)
 
@@ -256,7 +254,7 @@ For non-bundled apps (WordPress, static sites), use the IIFE build:
 </script>
 ```
 
-The IIFE bundle is ~5kb gzipped and exposes all exports on the `Consentify` global.
+The IIFE bundle is ~4.3kb gzipped and exposes all exports on the `Consentify` global. It is self-hosted only; for cloud mode load `dist/consentify-cloud.iife.min.js` instead (~5.3kb gzipped), which exposes the same exports plus `Consentify.createCloudConsentify` (see [below](#createcloudconsentifyinit--consentifycorecloud)).
 
 ### CSP nonce + SRI (recommended)
 
@@ -264,7 +262,7 @@ If your site uses a strict Content Security Policy, pin the integrity hash and f
 
 ```html
 <script
-  src="https://unpkg.com/@consentify/core@2/dist/consentify.iife.min.js"
+  src="https://unpkg.com/@consentify/core@3/dist/consentify.iife.min.js"
   integrity="sha384-REPLACE_WITH_SRI_HASH"
   crossorigin="anonymous"
   nonce="%%CSP_NONCE%%"></script>
@@ -272,16 +270,16 @@ If your site uses a strict Content Security Policy, pin the integrity hash and f
 
 Pair this with a CSP header such as `script-src 'self' 'nonce-%%CSP_NONCE%%'`. Generate the SRI hash per version you pin (e.g. `openssl dgst -sha384 -binary dist/consentify.iife.min.js | openssl base64 -A`). See [MDN: Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) for details.
 
-## Consentify Dev / Cloud reporting (built into core)
+## `createCloudConsentify(init)` — `@consentify/core/cloud`
 
-> **⚠️ Not live yet:** The hosted Consentify Dev platform (`cdn.consentify.dev` / `ingest.consentify.dev`) has not launched. Until it does, `createConsentify({ siteId })` against the default endpoints will reject with `ConsentifyConfigError`. Use self-hosted mode (`policy`) today, or point `endpoints` at your own infrastructure.
+> **⚠️ Not live yet:** The hosted Consentify Dev platform (`cdn.consentify.dev` / `ingest.consentify.dev`) has not launched. Until it does, `createCloudConsentify({ siteId })` against the default endpoints will reject with `ConsentifyConfigError`. Use self-hosted mode (`createConsentify({ policy })`) today, or point `endpoints` at your own infrastructure.
 
-Cloud analytics lives directly in `@consentify/core` — pass `siteId` to `createConsentify` and the factory becomes async, fetches your SiteConfig from the CDN, and starts event reporting automatically.
+Cloud (SaaS) mode ships as a separate entry point so self-hosted apps never bundle it. The factory is async: it fetches your SiteConfig from the CDN, derives `policy` and `mode` from it, and starts event reporting automatically (browser only). It resolves to the same instance type as `createConsentify`.
 
 ```ts
-import { createConsentify } from '@consentify/core';
+import { createCloudConsentify } from '@consentify/core/cloud';
 
-const consent = await createConsentify({
+const consent = await createCloudConsentify({
   siteId: 'your-site-id',
   apiKey: 'sk_live_...',  // optional
   endpoints: {
@@ -291,7 +289,44 @@ const consent = await createConsentify({
 });
 ```
 
-> **Note:** The separate `@consentify/cloud` package is deprecated as of `v2.0.0` and is a no-op. Remove it from your `package.json` and move the options to `createConsentify({ siteId, apiKey })`.
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `siteId` | `string` | *required* | Site whose SiteConfig is fetched and to which events are reported |
+| `apiKey` | `string` | — | API key sent with ingest events |
+| `endpoints.config` | `string` | `https://cdn.consentify.dev` | SiteConfig CDN |
+| `endpoints.ingest` | `string` | `https://ingest.consentify.dev` | Ingest endpoint |
+| `mode`, `consentMaxAgeDays` | | from SiteConfig | Local values override the fetched SiteConfig |
+| `cookie`, `expirationWarningDays`, `storage`, `secret`, `adapter`, `visitorId` | | | Same as [`createConsentify`](#createconsentifyinit) |
+
+`policy` is not accepted: categories and the policy identifier come from the SiteConfig. With `secret` (server-only) it resolves to an instance whose `getProof()` is HMAC-signed. The `CloudInit` and `SiteConfig` types are exported from `@consentify/core/cloud`. Core and cloud share one copy of the core code, so `ConsentifyConfigError` from `@consentify/core` matches errors thrown by the cloud factory.
+
+Script-tag sites use the cloud IIFE, which exposes every core export plus `createCloudConsentify` on the `Consentify` global:
+
+```html
+<script src="https://unpkg.com/@consentify/core@3/dist/consentify-cloud.iife.min.js"></script>
+<script>
+  Consentify.createCloudConsentify({ siteId: 'your-site-id' }).then(function (consent) {
+    consent.guard('analytics', function () {
+      // Load analytics script
+    });
+  });
+</script>
+```
+
+### Migrating to v3: cloud mode
+
+`createConsentify` no longer accepts `siteId`. Import the cloud factory from the subpath; the options are unchanged:
+
+```diff
+- import { createConsentify } from '@consentify/core';
+- const consent = await createConsentify({ siteId: 'your-site-id', apiKey: 'sk_live_...' });
++ import { createCloudConsentify } from '@consentify/core/cloud';
++ const consent = await createCloudConsentify({ siteId: 'your-site-id', apiKey: 'sk_live_...' });
+```
+
+Script-tag users switch from `dist/consentify.iife.min.js` to `dist/consentify-cloud.iife.min.js` and call `Consentify.createCloudConsentify(...)`.
+
+> **Note:** The separate `@consentify/cloud` package is deprecated as of `v2.0.0` and is a no-op. Remove it from your `package.json` and use `createCloudConsentify({ siteId, apiKey })` from `@consentify/core/cloud`.
 
 ## Custom Adapters
 

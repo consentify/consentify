@@ -41,7 +41,7 @@ describe('nextjs-app scaffolder', () => {
         expect(deps).not.toContain('@consentify/cloud');
     });
 
-    it('never adds @consentify/cloud (deprecated - SaaS lives in @consentify/core Mode B)', () => {
+    it('never adds @consentify/cloud (deprecated - SaaS lives in @consentify/core/cloud)', () => {
         const deps = scaffolder.runtimeDeps(ctx({ framework: 'nextjs-app', useSaas: true }));
         expect(deps).not.toContain('@consentify/cloud');
         expect(deps).toContain('@consentify/core');
@@ -111,6 +111,21 @@ describe('vanilla scaffolder', () => {
     it('writes a plain JS config file', () => {
         const files = scaffolder.files(ctx({ framework: 'vanilla' }));
         expect(files.map((f) => f.path)).toContain('consent-config.js');
+    });
+
+    it('points script-tag users at the core IIFE when self-hosted', () => {
+        const out = scaffolder.instructions(ctx({ framework: 'vanilla' })).join('\n');
+        expect(out).toContain('/dist/consentify.iife.min.js');
+        expect(out).toContain('Consentify.createConsentify({');
+        expect(out).not.toContain('consentify-cloud');
+    });
+
+    it('points script-tag users at the cloud IIFE in SaaS mode', () => {
+        const out = scaffolder.instructions(ctx({ framework: 'vanilla', useSaas: true, siteId: 'site_xyz' })).join('\n');
+        expect(out).toContain('/dist/consentify-cloud.iife.min.js');
+        expect(out).toContain('Consentify.createCloudConsentify({');
+        expect(out).toContain(`siteId: 'site_xyz'`);
+        expect(out).not.toContain('Consentify.createConsentify(');
     });
 });
 

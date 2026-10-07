@@ -14,7 +14,7 @@ export const vanilla: FrameworkScaffolder = {
         return files;
     },
     runtimeDeps() {
-        // SaaS (Mode B) lives in @consentify/core; no separate cloud package needed.
+        // SaaS lives in @consentify/core (the `/cloud` subpath); no separate cloud package needed.
         return ['@consentify/core'];
     },
     instructions(ctx) {
@@ -25,6 +25,24 @@ export const vanilla: FrameworkScaffolder = {
             ``,
             `Or use the IIFE build via <script>:`,
             ``,
+        ];
+        if (ctx.useSaas) {
+            // The cloud IIFE carries every core export plus createCloudConsentify.
+            lines.push(
+                `    <script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>`,
+                `    <script>`,
+                `      Consentify.createCloudConsentify({`,
+                `        siteId: '${ctx.siteId ?? 'your-site-id-here'}',`,
+                ...(ctx.apiKey ? [`        apiKey: '${ctx.apiKey}',`] : []),
+                `        mode: '${ctx.mode}',`,
+                `      }).then((consent) => {`,
+                `        // wire your banner to consent here`,
+                `      });`,
+                `    </script>`,
+            );
+            return lines;
+        }
+        lines.push(
             `    <script src="https://unpkg.com/@consentify/core/dist/consentify.iife.min.js"></script>`,
             `    <script>`,
             `      const consent = Consentify.createConsentify({`,
@@ -32,7 +50,7 @@ export const vanilla: FrameworkScaffolder = {
             `        mode: '${ctx.mode}',`,
             `      });`,
             `    </script>`,
-        ];
+        );
         return lines;
     },
 };

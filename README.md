@@ -223,10 +223,10 @@ The primary APIs above cover most integrations. For tables, the `server` / `clie
 
 | Package | Description |
 |---------|-------------|
-| [@consentify/core](./packages/core) | Headless consent SDK — TypeScript-first, SSR-safe, zero dependencies. Includes built-in Consentify Dev mode (`createConsentify({ siteId })`, hosted platform not live yet). |
+| [@consentify/core](./packages/core) | Headless consent SDK — TypeScript-first, SSR-safe, zero dependencies. Includes built-in Consentify Dev mode via the `@consentify/core/cloud` subpath (`createCloudConsentify({ siteId })`, hosted platform not live yet). |
 | [@consentify/react](./packages/react) | React hook for `@consentify/core` |
 | [create-consentify](./packages/create-consentify) | `npx` scaffolder — wires the SDK into Next.js, Vite, Remix, Astro, or vanilla projects |
-| ~~[@consentify/cloud](./packages/cloud)~~ | **Deprecated (v2.0.0, no-op shell).** Cloud functionality moved into `@consentify/core`. |
+| ~~[@consentify/cloud](./packages/cloud)~~ | **Deprecated (v2.0.0, no-op shell).** Cloud functionality moved into `@consentify/core/cloud`. |
 
 ## How it compares
 
@@ -251,9 +251,9 @@ The closest project in spirit is **c15t** — also headless and TypeScript-based
 
 ## Coming Soon: Consentify Dev
 
-A hosted consent management platform — the tool developers and marketers use to configure policies, translate banners, and watch opt-in rates. It pairs with this SDK via `createConsentify({ siteId })`.
+A hosted consent management platform — the tool developers and marketers use to configure policies, translate banners, and watch opt-in rates. It pairs with this SDK via `createCloudConsentify({ siteId })` from `@consentify/core/cloud`.
 
-> **Not live yet.** Until launch, `createConsentify({ siteId })` will fail against the default endpoints — use self-hosted mode (`policy`) today.
+> **Not live yet.** Until launch, `createCloudConsentify({ siteId })` will fail against the default endpoints — use self-hosted mode (`createConsentify({ policy })`) today.
 
 - **Visual banner builder** — drag-and-drop consent UI
 - **Consent analytics dashboard** — see opt-in/out rates

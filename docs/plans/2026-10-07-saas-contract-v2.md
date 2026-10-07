@@ -183,7 +183,7 @@ One event per request; there is no batching. Bodies are small (the record is coo
 
 Who sends events:
 
-- **Browser reporter**: started by `createCloudConsentify` in the browser. Sends one event per consent decision (every `set`, `acceptAll`, `rejectAll`, including a repeat of the same choices, which is a new decision with a new `givenAt`), and on page load any decided record it has not reported yet. Uses `fetch` with `keepalive: true`, so events survive page unload. Auth: `X-Consentify-Key` when the integrator configured `publicKey`.
+- **Browser reporter**: started by `createCloudConsentify` in the browser. Sends one event per consent decision (every `set`, `acceptAll`, `rejectAll`, including a repeat of the same choices, which is a new decision with a new `id` and `givenAt`), and on page load any decided record it has not reported yet. Uses `fetch` with `keepalive: true`, so events survive page unload. Auth: `X-Consentify-Key` when the integrator configured `publicKey`.
 - **Server reporter**: `reportConsent(consent, { serverKey, setCookie | cookieHeader, visitorId?, timeoutMs? })`, called by the integrator after writing consent in server code (for example a Next.js Server Action). One call, one attempt, default timeout 3000 ms. Auth: `X-Consentify-Server-Key`. It throws in a browser, so the server key cannot be used from browser code by mistake.
 
 ### 4.2 Keys and headers
@@ -237,6 +237,7 @@ interface IngestEvent {
 // Consent record v2, exactly as stored in the visitor's cookie.
 interface ConsentRecord {
   v?: 2;                                // absent on v1 records written by SDK 2.x
+  id?: string;                          // random id of the decision, 12 lowercase hex chars; absent on v1 records
   policy: string;                       // SiteConfig.policyIdentifier at decision time
   givenAt: string;                      // ISO 8601 UTC with milliseconds
   choices: Record<string, boolean>;     // "necessary": true plus every category
@@ -258,7 +259,7 @@ interface ConsentProof extends ConsentRecord {
 | `eventId` | always | Random id of this event, the idempotency key (see [4.7](#47-deduplication)). A UUID v4 in practice; on pages without `crypto.randomUUID` (plain `http:` pages, very old browsers) a random string of about 20 characters from `[0-9a-z]`. Treat as an opaque string of at most 64 characters |
 | `siteId` | always | Site the event belongs to |
 | `action` | always | Derived by the SDK from `record.choices` and the instance's categories: `accept_all` when every user category is `true`, `reject_all` when every one is `false`, otherwise `customize`. A convenience: the SaaS can recompute it from `record` and the categories published under `record.policy` |
-| `record` | always | The consent record as stored. v2 records have `v: 2` and the optional `pv`, `lang`, `src`. v1 records (written by SDK 2.x and still valid in v3) have only `policy`, `givenAt` and `choices` |
+| `record` | always | The consent record as stored. v2 records have `v: 2`, `id` (the decision's identity, see [4.7](#47-deduplication)) and the optional `pv`, `lang`, `src`. v1 records (written by SDK 2.x and still valid in v3) have only `policy`, `givenAt` and `choices` |
 | `visitorHash` | browser: always; server: only with an explicit `visitorId` | See [4.6](#46-visitorhash) |
 | `sdkVersion` | always | Version of `@consentify/core` that built the event, e.g. `"3.0.0"` |
 | `proof` | server events from instances with a `secret` | HMAC proof of `record`, see [4.8](#48-proofs) |
@@ -268,7 +269,7 @@ Notes:
 - `record.givenAt` comes from the visitor's device clock (browser events) or the integrator's server clock (server events). The ingest SHOULD store its own `receivedAt` and use it for ordering and retention.
 - `record.choices` holds every category of the policy at decision time plus `"necessary": true`.
 - The ingest MUST ignore unknown fields in the event and in `record` (store them or drop them, but do not reject). New optional fields may appear in later SDK minor versions without a change of `v`.
-- Validation the ingest SHOULD apply, answering `400` on failure: `v === 2`; `eventId` a string of 1 to 64 characters; `siteId` matches the key; `action` one of the three values; `record` an object with a non-empty string `policy`, a parseable `givenAt`, a `choices` object of booleans, and `v` absent or `2`; `visitorHash`, when present, a string of at most 256 characters; `sdkVersion` a string; `proof` only with a server key (rule 4 above).
+- Validation the ingest SHOULD apply, answering `400` on failure: `v === 2`; `eventId` a string of 1 to 64 characters; `siteId` matches the key; `action` one of the three values; `record` an object with a non-empty string `policy`, a parseable `givenAt`, a `choices` object of booleans, `v` absent or `2`, and `id` absent or a string of at most 64 characters; `visitorHash`, when present, a string of at most 256 characters; `sdkVersion` a string; `proof` only with a server key (rule 4 above).
 
 ### 4.5 Responses and retries
 
@@ -310,18 +311,18 @@ Two levels:
    - an integrator calling `reportConsent` twice for the same record;
    - rarely, two tabs racing before the browser's own dedup key is written.
 
-   The identity of a decision is `(siteId, record.policy, record.givenAt)`, the same key the browser uses (`consentify_last_event` holds `{siteId}|{policy}|{givenAt}`, so reloads do not re-report). The SaaS SHOULD store one decision per identity and merge its events: keep `proof` from the server event, `visitorHash` from whichever event has one (the browser event, when the server event has none), the channels seen, and the earliest `receivedAt`. Events with the same identity but different `choices` should not occur; keep both and flag them.
+   The identity of a decision is `(siteId, record.id)`. Every record the SDK v3 writes, in the browser or on the server, has a random `id`; `givenAt` alone is not enough, because two decisions in the same millisecond (two quick writes in one browser, or two visitors) share it. Records without `id` (v1 records written by SDK 2.x) fall back to `(siteId, record.policy, record.givenAt)`. The browser dedups with the same key (`consentify_last_event` holds `{siteId}|{policy}|{id}`, or `{siteId}|{policy}|{givenAt}` for a record without `id`, so reloads do not re-report). The SaaS SHOULD store one decision per identity and merge its events: keep `proof` from the server event, `visitorHash` from whichever event has one (the browser event, when the server event has none), the channels seen, and the earliest `receivedAt`. Events with the same identity but different `choices` should not occur; keep both and flag them.
 
-A repeated decision with the same choices has a new `givenAt` and is a new decision on purpose (re-affirmation is evidence too).
+A repeated decision with the same choices has a new `id` and `givenAt` and is a new decision on purpose (re-affirmation is evidence too).
 
 ### 4.8 Proofs
 
 A proof is present only on server events, and only when the integrator created the instance with a `secret`, an HMAC key that never leaves the integrator's server. The SaaS does not know this secret.
 
-- Signed fields: `policy`, `givenAt`, `choices`, and `v`, `pv`, `lang`, `src` when present. Absent fields are left out of the signed body.
+- Signed fields: `policy`, `givenAt`, `choices`, and `id`, `v`, `pv`, `lang`, `src` when present. Absent fields are left out of the signed body.
 - `proof` = the signed fields + `signature`. `signature` = lowercase hex of HMAC-SHA256(secret, canonical), where canonical is the signed fields serialized as JSON without whitespace, with object keys sorted recursively (the SDK's `stableStringify`).
 - The SaaS MUST store `proof` verbatim: it is the evidence.
-- The SaaS SHOULD check, without the secret, that the proof's signed fields equal the same fields of `record` (deep equality on `policy`, `givenAt`, `choices`, `v`, `pv`, `lang`, `src`), and answer `400` on a mismatch.
+- The SaaS SHOULD check, without the secret, that the proof's signed fields equal the same fields of `record` (deep equality on `policy`, `givenAt`, `choices`, `id`, `v`, `pv`, `lang`, `src`), and answer `400` on a mismatch.
 - Verification is done by whoever holds the secret, normally the integrator, after exporting proofs from the dashboard:
 
   ```ts
@@ -332,15 +333,15 @@ A proof is present only on server events, and only when the integrator created t
 
   `verifyProof` runs in Node 20+ and in browsers (Web Crypto) and returns `false` instead of throwing. It also accepts proofs after a JSON round trip, so stored proofs verify as is.
 - Reimplementing verification in another language requires reproducing the canonical form exactly. `stableStringify` orders keys with JavaScript `String.prototype.localeCompare`, which matches code-point order for lowercase ASCII keys but not in general (category names with upper-case letters, digits or symbols can sort differently). Use `verifyProof` instead.
-- Proofs of v1 records (no `v`, `pv`, `lang`, `src`) are signed over `{ policy, givenAt, choices }` and verify the same way.
+- Proofs of v1 records (no `id`, `v`, `pv`, `lang`, `src`) are signed over `{ policy, givenAt, choices }` and verify the same way.
 
 Worked example (the server event in [4.9](#49-examples)): with secret `example-signing-secret` the canonical form is
 
 ```
-{"choices":{"analytics":true,"marketing":true,"necessary":true},"givenAt":"2026-10-07T12:35:10.402Z","lang":"de","policy":"2026-10-01","pv":"2026-10-01","src":"banner","v":2}
+{"choices":{"analytics":true,"marketing":true,"necessary":true},"givenAt":"2026-10-07T12:35:10.402Z","id":"5d7e1a2b9c04","lang":"de","policy":"2026-10-01","pv":"2026-10-01","src":"banner","v":2}
 ```
 
-and the signature is `6d668647bc01bfa76ddb31cf3c4e371ed665b89860d5ac99c0db518e2524fb2d`; `verifyProof` returns `true` for that proof and `false` once any signed field is changed.
+and the signature is `64b7ff53608509a91e92426f622137748a5b2c64e7d9fa3ad0b8aed89c402d08`; `verifyProof` returns `true` for that proof and `false` once any signed field is changed.
 
 ### 4.9 Examples
 
@@ -360,6 +361,7 @@ X-Consentify-Key: pk_live_5f2b9c
   "action": "accept_all",
   "record": {
     "v": 2,
+    "id": "8c1f2e9a4b7d",
     "policy": "2026-10-01",
     "givenAt": "2026-10-07T12:34:56.789Z",
     "choices": { "analytics": true, "marketing": true, "necessary": true },
@@ -388,6 +390,7 @@ X-Consentify-Key: pk_live_5f2b9c
   "action": "reject_all",
   "record": {
     "v": 2,
+    "id": "e4a90b3c7f12",
     "policy": "2026-10-01",
     "givenAt": "2026-10-07T12:40:02.115Z",
     "choices": { "analytics": false, "marketing": false, "necessary": true },
@@ -415,6 +418,7 @@ X-Consentify-Server-Key: sk_live_9d1e44
   "action": "accept_all",
   "record": {
     "v": 2,
+    "id": "5d7e1a2b9c04",
     "policy": "2026-10-01",
     "givenAt": "2026-10-07T12:35:10.402Z",
     "choices": { "analytics": true, "marketing": true, "necessary": true },
@@ -427,11 +431,12 @@ X-Consentify-Server-Key: sk_live_9d1e44
     "policy": "2026-10-01",
     "givenAt": "2026-10-07T12:35:10.402Z",
     "choices": { "analytics": true, "marketing": true, "necessary": true },
+    "id": "5d7e1a2b9c04",
     "v": 2,
     "pv": "2026-10-01",
     "lang": "de",
     "src": "banner",
-    "signature": "6d668647bc01bfa76ddb31cf3c4e371ed665b89860d5ac99c0db518e2524fb2d"
+    "signature": "64b7ff53608509a91e92426f622137748a5b2c64e7d9fa3ad0b8aed89c402d08"
   }
 }
 ```
@@ -468,7 +473,7 @@ Ingest:
 - [ ] `Origin` allowlist and rate limits for browser events.
 - [ ] Payload validation from [4.4](#44-payload) (`400`), unknown fields ignored, `413` above 16 KB.
 - [ ] Idempotency on `(siteId, eventId)`; duplicates answer `2xx`.
-- [ ] Decision merge on `(siteId, record.policy, record.givenAt)` as in [4.7](#47-deduplication).
+- [ ] Decision merge on `(siteId, record.id)`, falling back to `(siteId, record.policy, record.givenAt)` for records without `id`, as in [4.7](#47-deduplication).
 - [ ] Store the event with `receivedAt` and the channel taken from the authenticating key; store `proof` verbatim after the record consistency check in [4.8](#48-proofs).
 - [ ] Treat `visitorHash` as in [4.6](#46-visitorhash): keyed hash at rest, no linking of `reject_all` tokens.
 - [ ] Answer fast (`202`, process asynchronously); `4xx` for client errors, never `5xx`.
@@ -489,7 +494,7 @@ Privacy:
 
 **The full record instead of `categories` and `policyVersion`.** The record is the evidence: `pv`, `lang` and `src` answer what the visitor saw, in which language and through which UI. Sending it unchanged also lets the ingest check a proof against the record it signs.
 
-**Random `eventId`, separate decision identity.** `eventId` identifies one event and makes retries idempotent. It is deliberately not derived from the record: a server event and the browser's later event for the same decision carry different, complementary data (`proof` versus `visitorHash`), so the second one must not be dropped as a duplicate. They are merged by decision identity instead.
+**Random `eventId`, separate decision identity.** `eventId` identifies one event and makes retries idempotent. It is deliberately not derived from the record: a server event and the browser's later event for the same decision carry different, complementary data (`proof` versus `visitorHash`), so the second one must not be dropped as a duplicate. They are merged by decision identity (`record.id`) instead.
 
 **`reportConsent(consent, { serverKey, setCookie | cookieHeader, visitorId?, timeoutMs? }): Promise<boolean>`.**
 

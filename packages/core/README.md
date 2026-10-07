@@ -248,6 +248,7 @@ type ConsentState<T> =
 
 interface Snapshot<T> {
   v?: 2;               // Record format (absent on records written by v2.x)
+  id?: string;         // Random id of the decision (absent on records written by v2.x)
   policy: string;      // Policy identifier/hash
   givenAt: string;     // ISO timestamp
   choices: Choices<T>; // { necessary: true, ...categories }
@@ -301,7 +302,7 @@ const consent = createConsentify({
 });
 
 const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie') });
-// { v: 2, policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null
+// { v: 2, id: '...', policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null
 
 await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true
 ```

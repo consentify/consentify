@@ -195,6 +195,7 @@ type ConsentSource = 'banner' | 'preferences' | 'api';
 
 interface Snapshot<T> {
   v?: 2;               // record format: 2 on every new record, absent on v1 records
+  id?: string;         // random id of the decision (12 hex chars): on every new record, absent on v1 records
   policy: string;      // policy.identifier or category hash
   givenAt: string;     // ISO timestamp
   choices: Choices<T>; // { necessary: true, ...categories }
@@ -204,14 +205,14 @@ interface Snapshot<T> {
 }
 ```
 
-Optional keys are omitted when unset. Metadata belongs to one decision: a server `set` merges `choices` from the existing cookie, but `pv`, `lang` and `src` come only from the current call and the init options. Server writes never read `<html lang>`; pass `lang` explicitly there.
+Optional keys are omitted when unset. `id` identifies the decision: every new record, client or server, gets a fresh random one, so two decisions in the same millisecond stay distinct (the cloud reporter and the ingest use it to deduplicate). Metadata belongs to one decision: a server `set` merges `choices` from the existing cookie, but `pv`, `lang` and `src` come only from the current call and the init options. Server writes never read `<html lang>`; pass `lang` explicitly there.
 
 ```ts
 consent.set({ analytics: true }, { source: 'preferences', lang: 'de' });
-consent.get(); // { decision: 'decided', snapshot: { v: 2, policy, givenAt, choices, lang: 'de', src: 'preferences' } }
+consent.get(); // { decision: 'decided', snapshot: { v: 2, id, policy, givenAt, choices, lang: 'de', src: 'preferences' } }
 ```
 
-Records written by v2.x (no `v`) are still read: with a matching policy they stay `decided`, unchanged, and the next write stores a v2 record. Any other `v`, a non-string `pv` / `lang`, or an unknown `src` makes the record invalid (treated as unset).
+Records written by v2.x (no `v`, no `id`) are still read: with a matching policy they stay `decided`, unchanged, and the next write stores a v2 record. Any other `v`, a non-string `id` / `pv` / `lang`, or an unknown `src` makes the record invalid (treated as unset).
 
 Whether the user accepted all, rejected all or customised is not stored; it follows from `choices` and the policy's categories.
 
@@ -229,12 +230,12 @@ const consent = createConsentify({
 });
 
 const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie') });
-// { v: 2, policy: '...', givenAt: '2026-...', choices: {...}, src: 'banner', signature: '<64 hex chars>' } or null when unset
+// { v: 2, id: '...', policy: '...', givenAt: '2026-...', choices: {...}, src: 'banner', signature: '<64 hex chars>' } or null when unset
 
 await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true; false if any field was altered
 ```
 
-The signature covers `policy`, `givenAt`, `choices` and, when present, `v`, `pv`, `lang` and `src`; other keys on a stored proof are ignored. Proofs of v1 records (including proofs issued by v2.x) have none of the new fields and still verify.
+The signature covers `policy`, `givenAt`, `choices` and, when present, `id`, `v`, `pv`, `lang` and `src`; other keys on a stored proof are ignored. Proofs of v1 records (including proofs issued by v2.x) have none of the new fields and still verify.
 
 ## Consent Mode (opt-in / opt-out)
 
@@ -432,7 +433,7 @@ export async function acceptAllAction() {
 - Resolves `true` when the ingest answered 2xx, and `false` when there is no valid record (unset, cleared, other policy, expired) or the request failed or timed out. It never rejects and never retries.
 - Throws `ConsentifyConfigError` when called in a browser, like `secret`: the server key would leak. It is not part of the cloud IIFE.
 - The event is the browser event plus `proof` (a [`ConsentProof`](#consent-proof-audit-trail) of `record`) when the instance has a `secret`. Whoever holds the secret can check it with `verifyProof`.
-- On the next page load, the browser reporter also reports the server-written record (it has not seen it yet) with a new `eventId`. The ingest treats `siteId` + `record.policy` + `record.givenAt` as one decision; see the contract.
+- On the next page load, the browser reporter also reports the server-written record (it has not seen it yet) with a new `eventId`. The ingest treats `siteId` + `record.id` as one decision; see the contract.
 
 ### Migrating to v3: cloud mode
 
@@ -485,7 +486,7 @@ The `cookieHeader` key must be present, since it is what selects server mode; it
 
 ### Migrating to v3: consent record
 
-New records are [consent record v2](#consent-record): `{ v: 2, policy, givenAt, choices }` plus optional `pv`, `lang` and `src`. Stored v2.x records keep working without re-consent, and their proofs still verify. Code that compares whole snapshots or proofs against `{ policy, givenAt, choices }` should allow the new keys.
+New records are [consent record v2](#consent-record): `{ v: 2, id, policy, givenAt, choices }` plus optional `pv`, `lang` and `src`. Stored v2.x records keep working without re-consent, and their proofs still verify. Code that compares whole snapshots or proofs against `{ policy, givenAt, choices }` should allow the new keys.
 
 ## Custom Adapters
 

@@ -2304,7 +2304,7 @@ describe('HMAC-SHA256 proof', () => {
 
 describe('consent record v2', () => {
     const cats = ['analytics', 'marketing'] as const;
-    const v2Keys = ['choices', 'givenAt', 'policy', 'v'];
+    const v2Keys = ['choices', 'givenAt', 'id', 'policy', 'v'];
     // Decoded record from a Set-Cookie header, or from document.cookie. An empty
     // value is a just-cleared cookie (happy-dom keeps `Max-Age=0` for up to 1 ms).
     const fromHeader = (h: string) => JSON.parse(decodeURIComponent(h.split(';')[0].slice('consentify='.length)));
@@ -2319,13 +2319,14 @@ describe('consent record v2', () => {
     });
 
     beforeEach(() => { clearAllCookies(); document.documentElement.lang = ''; });
-    afterEach(() => { clearAllCookies(); document.documentElement.lang = ''; vi.restoreAllMocks(); });
+    afterEach(() => { clearAllCookies(); document.documentElement.lang = ''; vi.restoreAllMocks(); vi.useRealTimers(); });
 
     it('new records have v: 2 and omit unset metadata', () => {
         const c = createConsentify({ policy: { categories: cats } });
         c.set({ analytics: true });
         expect(fromDocument()).toEqual({
             v: 2,
+            id: expect.stringMatching(/^[0-9a-f]{12}$/),
             policy: c.policy.identifier,
             givenAt: expect.any(String),
             choices: { necessary: true, analytics: true, marketing: false },
@@ -2334,6 +2335,34 @@ describe('consent record v2', () => {
         const s = c.get();
         expect(s.decision === 'decided' && Object.keys(s.snapshot).sort()).toEqual(v2Keys);
         expect(Object.keys(fromHeader(c.set({}, { cookieHeader: null }))).sort()).toEqual(v2Keys);
+    });
+
+    it('every new record gets its own 12-hex id, client and server', () => {
+        const t0 = Date.now();
+        vi.setSystemTime(t0); // same millisecond for every write below
+        const c = createConsentify({ policy: { categories: cats } });
+        c.set({ analytics: true });
+        const a = fromDocument();
+        c.set({ analytics: false });
+        const b = fromDocument();
+        const s1 = fromHeader(c.set({ analytics: true }, { cookieHeader: null }));
+        const s2 = fromHeader(c.acceptAll({ cookieHeader: null }));
+        const ids = [a.id, b.id, s1.id, s2.id];
+        for (const id of ids) expect(id).toMatch(/^[0-9a-f]{12}$/);
+        expect(new Set(ids).size).toBe(4);
+        expect(a.givenAt).toBe(b.givenAt);
+        const s = c.get();
+        expect(s.decision === 'decided' && s.snapshot.id).toBe(b.id);
+    });
+
+    it('generates ids without Web Crypto', () => {
+        vi.stubGlobal('crypto', undefined);
+        try {
+            const c = createConsentify({ policy: { categories: cats } });
+            expect(fromHeader(c.acceptAll({ cookieHeader: null })).id).toMatch(/^[0-9a-f]{12}$/);
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 
     it('records policy.textVersion as pv without changing the policy identifier', () => {
@@ -2442,11 +2471,13 @@ describe('consent record v2', () => {
         expect(fromDocument()).toMatchObject({ v: 2, src: 'preferences', choices: { analytics: true, marketing: true } });
     });
 
-    it('rejects records with an invalid src, non-string pv or lang, or an unknown v', () => {
+    it('rejects records with an invalid src, non-string id, pv or lang, or an unknown v', () => {
         const c = createConsentify({ policy: { categories: cats } });
         const base = { v: 2, ...v1Record(c.policy.identifier) };
         const read = (o: object) => c.get({ cookieHeader: `consentify=${enc(o)}` }).decision;
-        expect(read({ ...base, pv: '1', lang: 'en', src: 'banner' })).toBe('decided');
+        expect(read({ ...base, id: '0a1b2c3d4e5f', pv: '1', lang: 'en', src: 'banner' })).toBe('decided');
+        expect(read({ ...base, id: 42 })).toBe('unset');
+        expect(read({ ...base, id: null })).toBe('unset');
         expect(read({ ...base, src: 'popup' })).toBe('unset');
         expect(read({ ...base, src: null })).toBe('unset');
         expect(read({ ...base, pv: 3 })).toBe('unset');
@@ -2497,7 +2528,7 @@ describe('consent record v2', () => {
         }
     });
 
-    it('the HMAC proof covers v, pv, lang and src', async () => {
+    it('the HMAC proof covers id, v, pv, lang and src', async () => {
         await withSimulatedServer(async () => {
             const c = createConsentify({
                 policy: { categories: cats, textVersion: 't1' },
@@ -2506,9 +2537,11 @@ describe('consent record v2', () => {
             });
             const cookieHeader = setHeaderToCookieHeader(c.acceptAll({ cookieHeader: null, source: 'banner' }));
             const proof = (await c.getProof({ cookieHeader }))!;
-            expect(proof).toMatchObject({ v: 2, pv: 't1', lang: 'en', src: 'banner' });
+            expect(proof).toMatchObject({ v: 2, id: expect.stringMatching(/^[0-9a-f]{12}$/), pv: 't1', lang: 'en', src: 'banner' });
             expect(await verifyProof(proof, 'dev-secret')).toBe(true);
             for (const tampered of [
+                { ...proof, id: '000000000000' },
+                { ...proof, id: undefined },
                 { ...proof, src: 'preferences' as const },
                 { ...proof, src: undefined },
                 { ...proof, lang: 'de' },
@@ -3116,6 +3149,19 @@ describe('Cloud mode (Mode B)', () => {
         expect(JSON.parse(ingestCalls(spy)[1][1].body).action).toBe('accept_all');
     });
 
+    it('reports two decisions made in the same millisecond, keyed by record id', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        vi.setSystemTime(Date.now());
+        c.set({ analytics: true });
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
+        const [a, b] = ingestBodies(spy);
+        expect(a.record.givenAt).toBe(b.record.givenAt);
+        expect(a.record.id).not.toBe(b.record.id);
+        expect(localStorage.getItem('consentify_last_event')).toBe('site_abc|v1|' + b.record.id);
+    });
+
     it('does not re-report a decision echoed from another tab', async () => {
         MockBroadcastChannel.channels.clear();
         vi.stubGlobal('BroadcastChannel', MockBroadcastChannel);
@@ -3202,6 +3248,17 @@ describe('Cloud mode (Mode B)', () => {
         expect(body.action).toBe('reject_all');
         expect(body.visitorHash).toMatch(/^[0-9a-f]{8}$/);
         expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
+    });
+
+    it('reject_all still reports a one-off token without Web Crypto', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await cloud();
+        vi.stubGlobal('crypto', undefined);
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        const body = ingestBodies(spy)[0];
+        expect(body.action).toBe('reject_all');
+        expect(body.visitorHash).toMatch(/^[0-9a-f]{8}$/);
     });
 
     it('two reject_all events carry different tokens', async () => {

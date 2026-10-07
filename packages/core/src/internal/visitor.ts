@@ -1,5 +1,5 @@
 import type { VisitorIdSource } from './types';
-import { canLocalStorage, toHex } from './util';
+import { canLocalStorage, randomHex } from './util';
 
 export const VISITOR_KEY = 'consentify_visitor';
 
@@ -39,7 +39,7 @@ export function dropStoredVisitorId(): void {
 }
 
 /** One-off token for a `reject_all` event: 8 random hex chars, never stored. */
-export const ephemeralVisitorId = (): string => toHex(crypto.getRandomValues(new Uint8Array(4)).buffer);
+export const ephemeralVisitorId = (): string => randomHex(4);
 
 /** `create` as in `readOrCreateStoredVisitorId`; an explicit `source` always wins. */
 export async function resolveVisitorId(source?: VisitorIdSource, create?: boolean): Promise<string> {

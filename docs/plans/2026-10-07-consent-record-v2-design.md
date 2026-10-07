@@ -22,6 +22,7 @@ type ConsentSource = 'banner' | 'preferences' | 'api';
 
 interface Snapshot<T> {
   v?: 2;               // record format; always 2 on new writes, absent on v1 records
+  id?: string;         // random id of the decision; always set on new writes, absent on v1 records
   policy: string;      // policy.identifier or category hash (unchanged)
   givenAt: string;     // ISO timestamp (unchanged)
   choices: Choices<T>; // (unchanged)
@@ -36,6 +37,7 @@ Optional keys are left out of the record when unset, never written as `null` or 
 | Field | Source | Notes |
 |-------|--------|-------|
 | `v` | always `2` | Lets readers tell a v2 record without metadata from a v1 record |
+| `id` | 12 random lowercase hex chars (`crypto.getRandomValues`, `Math.random` without Web Crypto) | Identity of the decision, client and server writes alike. `givenAt` has millisecond resolution, so two decisions in the same millisecond (two quick `set()` calls, or two visitors) would otherwise look identical to the reporter's dedup and to the ingest's decision merge |
 | `pv` | `policy.textVersion` (init) | Recorded on every new record. Does not invalidate consent (see below) |
 | `lang` | per-call `lang`, else init `lang`, else `<html lang>` | `<html lang>` is read at write time, so SPAs that switch language record the current one. Client writes only; no `navigator.language` fallback |
 | `src` | per-call `source` | `'banner'` (first-layer banner), `'preferences'` (settings dialog), `'api'` (programmatic, e.g. a server route or an imported decision) |
@@ -71,9 +73,9 @@ The one thing lost is telling an "Accept all" click from a custom selection that
 `isValidSnapshot` accepts:
 
 - **v1**: no `v` key, same rules as today.
-- **v2**: `v === 2`; `pv` and `lang`, when present, must be strings; `src`, when present, must be one of the three sources.
+- **v2**: `v === 2`; `id`, `pv` and `lang`, when present, must be strings; `src`, when present, must be one of the three sources.
 
-Any other `v` is rejected, so a future format needs an explicit reader instead of being misread. A v1 cookie (or adapter record) with a matching policy hash stays `decided`: upgrading the SDK forces no re-consent. It is returned as stored, without `v` or metadata, and is not rewritten on read; rewriting would invent metadata the user never saw. The next write by the user produces a v2 record. That is why `v` is optional in the `Snapshot` type even though every new record has it.
+Any other `v` is rejected, so a future format needs an explicit reader instead of being misread. A v1 cookie (or adapter record) with a matching policy hash stays `decided`: upgrading the SDK forces no re-consent. It is returned as stored, without `v`, `id` or metadata, and is not rewritten on read; rewriting would invent metadata the user never saw. The next write by the user produces a v2 record. That is why `v` and `id` are optional in the `Snapshot` type even though every new record has them.
 
 Adapter `load()` results go through the same check, so an adapter must return the record as saved (JSON round-trip is enough). Columns mapped to `null` are rejected like any other non-string value.
 
@@ -84,16 +86,16 @@ Measured with five categories, URI-encoded as stored:
 | Record | Encoded value |
 |--------|---------------|
 | v1 | 266 B |
-| v2, no metadata | 280 B (+14) |
-| v2, `pv: "2026-10-01"`, `lang: "en-US"`, `src: "preferences"` | 369 B (+103) |
+| v2, `id`, no metadata | 312 B (+46) |
+| v2, `id`, `pv: "2026-10-01"`, `lang: "en-US"`, `src: "preferences"` | 401 B (+135) |
 
-The full `Set-Cookie` header for the last row is ~430 B. `encodeURIComponent` turns every `"`, `:` and `,` into three bytes, so key length counts: `pv`/`lang`/`src`/`v` instead of `textVersion`/`language`/`source`/`version` saves ~22 raw bytes per record. Values are not truncated. Keep `textVersion` short (a date or semver) and `lang` a BCP 47 tag; the existing warning at 3.5 KB still applies.
+The `id` costs 32 bytes encoded. The full `Set-Cookie` header for the last row is ~460 B. `encodeURIComponent` turns every `"`, `:` and `,` into three bytes, so key length counts: `pv`/`lang`/`src`/`v` instead of `textVersion`/`language`/`source`/`version` saves ~22 raw bytes per record. Values are not truncated. Keep `textVersion` short (a date or semver) and `lang` a BCP 47 tag; the existing warning at 3.5 KB still applies.
 
 ## HMAC proof
 
-`proofBody` signs `policy`, `givenAt`, `choices` and, when present, `v`, `pv`, `lang` and `src`. `ConsentProof<T>` is `Snapshot<T> & { signature }`, so the proof carries the same optional fields. Changing, adding or removing any of them fails `verifyProof`.
+`proofBody` signs `policy`, `givenAt`, `choices` and, when present, `id`, `v`, `pv`, `lang` and `src`. `ConsentProof<T>` is `Snapshot<T> & { signature }`, so the proof carries the same optional fields. Changing, adding or removing any of them fails `verifyProof`.
 
-A field that is absent (or `null`) is left out of the signed body. A proof issued by 2.x for a v1 record was signed over `{ policy, givenAt, choices }`; its body is unchanged, so it still verifies. Proofs for v1 records read by v3 are v1-shaped too.
+A field that is absent (or `null`) is left out of the signed body. A proof issued by 2.x for a v1 record was signed over `{ policy, givenAt, choices }`; its body is unchanged, so it still verifies. Proofs for v1 records read by v3 are v1-shaped too (no `id`).
 
 `visitorId` is not part of the proof; it stays adapter / ingest context.
 
@@ -104,4 +106,4 @@ A field that is absent (or `null`) is left out of the signed body. A proof issue
 
 ## Testing
 
-`packages/core/src/index.test.ts`: new records have `v: 2` and omit unset keys; `pv` from `policy.textVersion`; `lang` from init, `<html lang>` and per-call override; `src` per call on `set` / `acceptAll` / `rejectAll`, client and server; `set(choices, { source })` stays client-side; `set(choices, { cookieHeader: undefined })` is server mode; a v1 cookie still reads as decided; invalid `src`, non-string `pv` and unknown `v` are rejected; tampering `src` fails `verifyProof`; a 2.x-style v1 proof still verifies.
+`packages/core/src/index.test.ts`: new records have `v: 2` and a 12-hex `id` (a new one per write, also without Web Crypto) and omit unset keys; `pv` from `policy.textVersion`; `lang` from init, `<html lang>` and per-call override; `src` per call on `set` / `acceptAll` / `rejectAll`, client and server; `set(choices, { source })` stays client-side; `set(choices, { cookieHeader: undefined })` is server mode; a v1 cookie still reads as decided; invalid `src`, non-string `id` / `pv` and unknown `v` are rejected; tampering `id` or `src` fails `verifyProof`; a 2.x-style v1 proof still verifies.

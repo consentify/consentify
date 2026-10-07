@@ -46,6 +46,8 @@ export type ConsentSource = 'banner' | 'preferences' | 'api';
 export interface Snapshot<T extends UserCategory> {
     /** Record format. `2` on every new record; absent on v1 records, which are still read. */
     v?: 2;
+    /** Random id of the decision (12 lowercase hex chars). On every new record; absent on v1 records. */
+    id?: string;
     policy: string;
     givenAt: string;
     choices: Choices<T>;

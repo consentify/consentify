@@ -44,6 +44,7 @@ import {
     isValidSnapshot,
     logE,
     logW,
+    randomHex,
     toISO,
 } from './internal/util';
 
@@ -324,11 +325,12 @@ export function createConsentify<Cs extends readonly string[]>(
     const secret = init.secret ?? '';
     const textVersion = init.policy.textVersion;
 
-    // New consent record (format v2). Unset optional keys are omitted. `pv` and
-    // `lang` are coerced and an unknown `source` is dropped, so untyped callers
-    // cannot write a record that the next read rejects.
+    // New consent record (format v2) with a random decision `id` (12 hex chars),
+    // so two decisions in the same millisecond stay distinct. Unset optional
+    // keys are omitted. `pv` and `lang` are coerced and an unknown `source` is
+    // dropped, so untyped callers cannot write a record that the next read rejects.
     const record = (choices: Choices<T>, o?: WriteOptions, docLang?: string): Snapshot<T> => {
-        const s: Snapshot<T> = { v: 2, policy: policyHash, givenAt: toISO(), choices };
+        const s: Snapshot<T> = { v: 2, id: randomHex(6), policy: policyHash, givenAt: toISO(), choices };
         const lang = o?.lang || init.lang || docLang;
         if (textVersion) s.pv = '' + textVersion;
         if (lang) s.lang = '' + lang;

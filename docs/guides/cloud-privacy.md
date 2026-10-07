@@ -52,14 +52,14 @@ Cloud mode uses four localStorage keys:
 |-----|---------|----------|---------|
 | `consentify_visitor` | Visitor identifier for consent records (not used when you pass `visitorId`) | Created at the first `accept_all` or `customize` decision, never on page load. Deleted when the visitor chooses `reject_all`; otherwise kept until site data is cleared | Random UUID v4 (a `Math.random` fallback on browsers without Web Crypto) |
 | `consentify_event_buffer` | Retry buffer for the last failed event | Until the next successful send, or the next page load, which retries it once | JSON: `{ url, body, publicKey? }` - the event payload below and your public key |
-| `consentify_last_event` | Deduplication key | Persistent | `siteId\|policyHash\|givenAt` to prevent re-reporting identical decisions |
+| `consentify_last_event` | Deduplication key | Persistent | `siteId\|policy\|id` (the record's random decision id; `givenAt` for records written by SDK 2.x) to prevent re-reporting the same decision |
 | `consentify_cfg_<siteId>` | SiteConfig cache | Overwritten on each refresh; fresh for `configTtlSec` (default 1 hour), then served stale while refreshing | JSON: `{ t, h, c }` - fetch time, config hash, and the site's public SiteConfig. No visitor data |
 
 If localStorage is unavailable (private browsing, quota exceeded, etc.), deduplication falls back to in-memory only and the SiteConfig is fetched on every page load - no errors. Events retry on next page load if the first attempt failed.
 
 ## Consent Record
 
-The consent record kept in the `consentify` cookie (and passed to a custom `adapter`) stores the policy version, timestamp and choices, plus the policy text version (`pv`), the language of the consent UI (`lang`) and which UI recorded the decision (`src`: `banner`, `preferences` or `api`). These fields describe what the visitor was shown, not who the visitor is. Every event carries the full record (see below).
+The consent record kept in the `consentify` cookie (and passed to a custom `adapter`) stores the policy version, timestamp and choices, a random id of the decision (`id`, 12 hex characters, new for every decision), plus the policy text version (`pv`), the language of the consent UI (`lang`) and which UI recorded the decision (`src`: `banner`, `preferences` or `api`). These fields describe what the visitor was shown, not who the visitor is. Every event carries the full record (see below).
 
 ## Event Payload
 
@@ -73,6 +73,7 @@ Each consent change in the browser is POSTed to `https://ingest.consentify.dev/v
   "action": "customize",
   "record": {
     "v": 2,
+    "id": "8c1f2e9a4b7d",
     "policy": "2026-10-01",
     "givenAt": "2026-10-07T12:34:56.789Z",
     "choices": { "necessary": true, "analytics": true, "marketing": false },
@@ -87,7 +88,7 @@ Each consent change in the browser is POSTed to `https://ingest.consentify.dev/v
 
 - **eventId**: Random UUID for this event, so a retried event is stored once. Not linked to the visitor
 - **action**: Derived from the decision: `accept_all` (all user categories granted), `reject_all` (none granted), `customize` (mixed)
-- **record**: The [consent record](#consent-record) as stored in the cookie: policy version, timestamp, choices (including `necessary`, always `true`), and `pv`, `lang`, `src` when set. Records written by SDK 2.x have only `policy`, `givenAt` and `choices`
+- **record**: The [consent record](#consent-record) as stored in the cookie: policy version, timestamp, choices (including `necessary`, always `true`), the decision `id`, and `pv`, `lang`, `src` when set. Records written by SDK 2.x have only `policy`, `givenAt` and `choices`
 - **visitorHash**: Your `visitorId` if you set one. Otherwise the stored random id for `accept_all` and `customize`, and a one-off 8-character hex token for `reject_all` (see [Visitor ID](#visitor-id))
 - **sdkVersion**: Version of `@consentify/core` that sent the event
 

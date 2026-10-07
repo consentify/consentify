@@ -167,9 +167,10 @@ export function startCloudReporting<T extends UserCategory>(
     if (!isBrowser()) return () => {};
     const url = eventsUrl(opts.ingestEndpoint);
     const userCats = instance.policy.categories.filter(c => c !== 'necessary');
-    // Dedup events by `siteId + policy + givenAt`; `givenAt` is a fresh ISO
-    // timestamp on every real write, so identical snapshots (e.g. cross-tab
-    // echoes) share a key and are suppressed. The key is mirrored to
+    // Dedup events by `siteId + policy + id` (`givenAt` for v1 records, which
+    // have no `id`); every real write gets a fresh random `id`, so identical
+    // snapshots (e.g. cross-tab echoes) share a key and are suppressed, while
+    // two decisions in the same millisecond do not. The key is mirrored to
     // localStorage so the init-time send of an already-decided state does not
     // re-report the same decision on every page load. On storage failure the
     // dedup silently degrades to in-memory only.
@@ -202,7 +203,7 @@ export function startCloudReporting<T extends UserCategory>(
 
     const send = (state: ConsentState<T>): void => {
         if (state.decision !== 'decided') return;
-        const key = opts.siteId + '|' + state.snapshot.policy + '|' + state.snapshot.givenAt;
+        const key = opts.siteId + '|' + state.snapshot.policy + '|' + (state.snapshot.id ?? state.snapshot.givenAt);
         // Check storage too: another tab may have reported this snapshot already.
         if (key === lastKey || key === lastKeyStore()) return;
         lastKey = key;

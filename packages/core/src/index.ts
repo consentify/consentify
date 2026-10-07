@@ -31,7 +31,7 @@ import {
     type CookieOpt,
 } from './internal/cookie';
 import { buildProofHmac } from './internal/crypto';
-import { resolveVisitorId } from './internal/visitor';
+import { dropStoredVisitorId, ephemeralVisitorId, resolveVisitorId } from './internal/visitor';
 import {
     MS_PER_DAY,
     SOURCES,
@@ -153,9 +153,10 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
      * events. When omitted, a random id is stored in localStorage under
      * `consentify_visitor`, but only after a decision: hydration on load only
      * reads an existing id (and skips `adapter.load()` when there is none),
-     * `adapter.save()` and accept/customize cloud events create it, and a
-     * cloud `reject_all` deletes it and reports a one-off token instead. On
-     * the server this falls back to an empty string unless explicitly provided.
+     * accept/customize decisions (`adapter.save()`, cloud events) create it,
+     * and a reject-all deletes it and passes a one-off token to
+     * `adapter.save()` and the cloud event instead. On the server this falls
+     * back to an empty string unless explicitly provided.
      */
     visitorId?: VisitorIdSource;
 }
@@ -540,7 +541,10 @@ export function createConsentify<Cs extends readonly string[]>(
     // ---- Adapter + visitor id ----
     // An explicit `visitorId` is resolved lazily and cached. The default stored
     // id is re-read on each use: hydration only reads it (`create` false), so
-    // a first-time visitor gets no id before deciding; `save` may mint it.
+    // a first-time visitor gets no id before deciding; `save` may mint it,
+    // except for a refusal (every user category denied): that deletes the
+    // stored id and is saved under a one-off token, like the cloud reporter's
+    // `reject_all`, so a refusal is never linked to a persistent auto id.
     // Adapter `save`/`load` are fire-and-forget: failures are logged but never
     // bubble up into the consent flow or throw from `client.set`.
     const adapter = init.adapter;
@@ -561,8 +565,10 @@ export function createConsentify<Cs extends readonly string[]>(
         if (!adapter) return;
         void (async () => {
             try {
+                const refusal = !init.visitorId && init.policy.categories.every(c => !snapshot.choices[c as T]);
+                if (refusal) dropStoredVisitorId();
                 const data: { visitorId: string; snapshot: Snapshot<T>; proof?: ConsentProof<T> } =
-                    { visitorId: await getVisitorId(true), snapshot };
+                    { visitorId: refusal ? ephemeralVisitorId() : await getVisitorId(true), snapshot };
                 if (secret) data.proof = await buildProofHmac(snapshot, secret);
                 await adapter.save(data);
             } catch (err) {

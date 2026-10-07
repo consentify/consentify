@@ -24,7 +24,7 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `expirationWarningDays` | `number` | `30` | Days before expiry to emit `'expiring'` event |
 | `storage` | `StorageKind[]` | `['cookie']` | Client storage priority (`'cookie'`, `'localStorage'`) |
 | `secret` | `string` | — | Server-only. Adds an async, HMAC-SHA256 signed `getProof()` and passes a signed `proof` to `adapter.save()`. Throws `ConsentifyConfigError` in a browser |
-| `visitorId` | `string \| () => string \| Promise<string>` | auto | Visitor ID for the adapter and cloud events. When set, it is used for every decision, `reject_all` included. Default: a random id in localStorage (`consentify_visitor`), created only after a decision (`adapter.save()`, cloud `accept_all` / `customize`); a cloud `reject_all` deletes it and sends a one-off token. See [visitor ID](./cloud-privacy.md#visitor-id) |
+| `visitorId` | `string \| () => string \| Promise<string>` | auto | Visitor ID for the adapter and cloud events. When set, it is used for every decision, `reject_all` included. Default: a random id in localStorage (`consentify_visitor`), created only after an `accept_all` / `customize` decision (by `adapter.save()` or the cloud reporter); a `reject_all` deletes it, and `adapter.save()` and the cloud event get a one-off 8-hex token instead. See [visitor ID](./cloud-privacy.md#visitor-id) |
 | `adapter` | `ConsentAdapter<T>` | — | Custom persistence backend |
 
 `createConsentify` is self-hosted only. Cloud mode lives in [`createCloudConsentify`](#createcloudconsentifyinit--consentifycorecloud) from `@consentify/core/cloud`; passing `siteId` here is a type error and throws `ConsentifyConfigError` at runtime.
@@ -518,7 +518,7 @@ const consent = createConsentify({
 });
 ```
 
-`save` is called for every new decision written in the browser (`set()` / `acceptAll()` / `rejectAll()`; a no-op write without a `source` saves nothing) and receives the full [consent record](#consent-record). `load` is called on startup to hydrate state for the current `visitorId`; without an explicit `visitorId` it is skipped until an id is stored (a first-time visitor has nothing to load). Return the snapshot as it was saved (storing it as JSON is enough): it is validated like a cookie, so optional keys must be absent or strings, not `null`.
+`save` is called for every new decision written in the browser (`set()` / `acceptAll()` / `rejectAll()`; a no-op write without a `source` saves nothing) and receives the full [consent record](#consent-record). `load` is called on startup to hydrate state for the current `visitorId`; without an explicit `visitorId` it is skipped until an id is stored (a first-time visitor has nothing to load). Without an explicit `visitorId`, a reject-all record (every category denied) is saved under a one-off 8-hex token and the stored id is deleted, so a refusal is never linked to a persistent id; the next accept or custom choice starts a new id. Return the snapshot as it was saved (storing it as JSON is enough): it is validated like a cookie, so optional keys must be absent or strings, not `null`.
 
 ## Policy Versioning
 

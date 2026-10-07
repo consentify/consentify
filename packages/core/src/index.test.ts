@@ -2183,6 +2183,52 @@ describe('ConsentAdapter integration', () => {
         expect(localStorage.getItem('consentify_visitor')).toBe(adapter._saved[0].visitorId);
     });
 
+    it('never links a reject-all to the stored visitor id: it gets a one-off token', async () => {
+        const adapter = makeAdapter();
+        const c = createConsentify({
+            policy: { categories: ['analytics', 'marketing'] as const },
+            adapter,
+        });
+        c.acceptAll({ source: 'banner' });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        const first = adapter._saved[0].visitorId;
+        expect(localStorage.getItem('consentify_visitor')).toBe(first);
+
+        c.rejectAll({ source: 'banner' });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(2));
+        expect(adapter._saved[1].visitorId).toMatch(/^[0-9a-f]{8}$/);
+        expect(localStorage.getItem('consentify_visitor')).toBeNull();
+
+        // A customize with every category off is a refusal too.
+        c.set({ analytics: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(3));
+        c.set({ analytics: false });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(4));
+        expect(adapter._saved[3].visitorId).toMatch(/^[0-9a-f]{8}$/);
+        expect(adapter._saved[3].visitorId).not.toBe(adapter._saved[1].visitorId);
+        expect(localStorage.getItem('consentify_visitor')).toBeNull();
+
+        // The next grant starts a new persistent id, unrelated to the first one.
+        c.set({ marketing: true });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(5));
+        expect(adapter._saved[4].visitorId).toMatch(/^[0-9a-f-]{36}$/);
+        expect(adapter._saved[4].visitorId).not.toBe(first);
+        expect(localStorage.getItem('consentify_visitor')).toBe(adapter._saved[4].visitorId);
+    });
+
+    it('an explicit visitorId is still passed for a reject-all', async () => {
+        const adapter = makeAdapter();
+        const c = createConsentify({
+            policy: { categories: ['analytics'] as const },
+            adapter,
+            visitorId: 'acct-7',
+        });
+        c.rejectAll({ source: 'banner' });
+        await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        expect(adapter._saved[0].visitorId).toBe('acct-7');
+        expect(localStorage.getItem('consentify_visitor')).toBeNull();
+    });
+
     it('recovers when a user visitorId factory rejects on first call', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const adapter = makeAdapter();
@@ -3401,6 +3447,38 @@ describe('Cloud mode (Mode B)', () => {
         expect(b.visitorHash).toMatch(/^[0-9a-f]{8}$/);
         expect(a.visitorHash).not.toBe(b.visitorHash);
         expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
+    });
+
+    it('with an adapter, a reject_all is saved and reported under one-off tokens, never the stored id', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const saved: { visitorId: string }[] = [];
+        const adapter = { async save(d: { visitorId: string }) { saved.push(d); }, async load() { return null; } };
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB, adapter });
+
+        c.acceptAll({ source: 'banner' });
+        await vi.waitFor(() => expect(saved).toHaveLength(1));
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        const idA = localStorage.getItem(VISITOR_KEY);
+        expect(idA).toMatch(/^[0-9a-f-]{36}$/);
+        expect(saved[0].visitorId).toBe(idA);
+        expect(ingestBodies(spy)[0].visitorHash).toBe(idA);
+
+        c.rejectAll({ source: 'banner' });
+        await vi.waitFor(() => expect(saved).toHaveLength(2));
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
+        await new Promise(r => setTimeout(r, 0));
+        expect(saved[1].visitorId).toMatch(/^[0-9a-f]{8}$/);
+        expect(ingestBodies(spy)[1]).toMatchObject({ action: 'reject_all', visitorHash: expect.stringMatching(/^[0-9a-f]{8}$/) });
+        expect(localStorage.getItem(VISITOR_KEY)).toBeNull();
+
+        c.acceptAll({ source: 'banner' });
+        await vi.waitFor(() => expect(saved).toHaveLength(3));
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(3));
+        const idB = localStorage.getItem(VISITOR_KEY);
+        expect(idB).toMatch(/^[0-9a-f-]{36}$/);
+        expect(idB).not.toBe(idA);
+        expect(saved[2].visitorId).toBe(idB);
+        expect(ingestBodies(spy)[2].visitorHash).toBe(idB);
     });
 
     for (const [kind, visitorId] of [['string', 'acct-42'], ['factory', async () => 'acct-42']] as const) {

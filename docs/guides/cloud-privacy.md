@@ -114,7 +114,7 @@ The SDK resolves the identifier when it sends an event, not when the page loads.
 - Before the first decision the SDK does not read or write `consentify_visitor`. A visitor who never decides gets no identifier. Retrying a buffered event does not create one either: the retry resends the stored payload as is.
 - `accept_all` or `customize`: the SDK reads `consentify_visitor`, creates a random UUID there if none exists, and sends it as `visitorHash`. Later events from the same browser carry the same id.
 - `reject_all`: the SDK deletes `consentify_visitor` if present and sends a one-off token of 8 random hex characters (for example `"3f9a0c1e"`) as `visitorHash`. The token is never stored, so every refusal gets a new one and cannot be linked to earlier or later events from that browser.
-- With an `adapter`, `adapter.save()` needs a key for every decision, so it creates `consentify_visitor` after any decision, `reject_all` included. On page load, `adapter.load()` runs only when an id is already stored.
+- With an `adapter`, `adapter.save()` follows the same rule: an `accept_all` or `customize` record is saved under `consentify_visitor` (created if none exists), and a `reject_all` record deletes it and is saved under a new one-off 8-hex token, so a refusal is not linked to a persistent id in your store either. On page load, `adapter.load()` runs only when an id is already stored.
 
 **Custom `visitorId`:**
 
@@ -140,7 +140,7 @@ A custom `visitorId` is sent as `visitorHash` with every browser event, `reject_
 
 ### Legal basis
 
-The stored id lets a consent record be attributed to the same browser over time. GDPR requires the controller to be able to demonstrate that the user consented (Art. 7(1)) and to demonstrate compliance in general (accountability, Art. 5(2)). For that reason the reporter creates the id only once the visitor has granted at least one optional category, and uses it only in consent records. Refusals are reported without a persistent identifier: the stored id is deleted and the `reject_all` event carries a one-off token. A custom `visitorId`, and the key an `adapter` stores records under, are your own; choosing them, and having a legal basis for keeping them with consent records, is your responsibility.
+The stored id lets a consent record be attributed to the same browser over time. GDPR requires the controller to be able to demonstrate that the user consented (Art. 7(1)) and to demonstrate compliance in general (accountability, Art. 5(2)). For that reason the reporter creates the id only once the visitor has granted at least one optional category, and uses it only in consent records. Refusals are reported and passed to an `adapter` without a persistent identifier: the stored id is deleted and the `reject_all` event and `adapter.save()` get a one-off token. A custom `visitorId`, and the key an `adapter` stores records under, are your own; choosing them, and having a legal basis for keeping them with consent records, is your responsibility.
 
 ## Reject All Is Reported
 

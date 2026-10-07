@@ -145,21 +145,18 @@ Alternative to an API route - use a Server Action to set the consent cookie:
 'use server';
 
 import { cookies } from 'next/headers';
+import { parseSetCookie } from '@consentify/core';
 import { consent } from '../lib/consent';
 
 export async function setConsent(choices: Record<string, boolean>) {
   const cookieStore = await cookies();
-  const setCookieHeader = consent.set(choices, cookieStore.toString());
+  const header = consent.set(choices, cookieStore.toString());
 
-  // Parse the Set-Cookie header and apply it
-  const [nameValue] = setCookieHeader.split(';');
-  const [name, value] = nameValue.split('=');
-  cookieStore.set(name, value, {
-    path: '/',
-    maxAge: 60 * 60 * 24 * 365,
-    sameSite: 'lax',
-    secure: true,
-  });
+  // Apply the Set-Cookie header with the instance's own cookie config
+  // (name, path, domain, Max-Age, SameSite, Secure). `value` is URI-encoded
+  // and Next.js encodes values again, so decode it first.
+  const { name, value, options } = parseSetCookie(header);
+  cookieStore.set(name, decodeURIComponent(value), options);
 }
 ```
 
@@ -331,15 +328,14 @@ Server-side version (Server Actions):
 'use server';
 
 import { cookies } from 'next/headers';
+import { parseSetCookie } from '@consentify/core';
 import { consent } from '../lib/consent';
 
 export async function acceptAllConsent() {
   const cookieStore = await cookies();
   const header = consent.acceptAll(cookieStore.toString());
-  // Parse and set the cookie from the Set-Cookie header
-  const [nameValue] = header.split(';');
-  const [name, value] = nameValue.split('=');
-  cookieStore.set(name, value, { path: '/', maxAge: 60 * 60 * 24 * 365, sameSite: 'lax', secure: true });
+  const { name, value, options } = parseSetCookie(header);
+  cookieStore.set(name, decodeURIComponent(value), options); // Next.js re-encodes values
 }
 ```
 

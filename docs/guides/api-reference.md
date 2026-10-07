@@ -69,6 +69,19 @@ The `server` and `client` namespaces are still available for direct access:
 | `client.subscribe` | `(cb: () => void) => () => void` | Subscribe to changes |
 | `client.getServerSnapshot` | `() => ConsentState<T>` | Always `{ decision: 'unset' }` |
 
+## `parseSetCookie(header)`
+
+Pure helper that splits a `Set-Cookie` header returned by the server API (`set`, `clear`, `acceptAll`, `rejectAll`) into `{ name, value, options }` for framework cookie setters. `options` carries the instance's cookie config as `{ path?, maxAge?, domain?, sameSite?, secure?, partitioned? }` with lowercase `sameSite` and `maxAge` in seconds; absent attributes are omitted. `value` is returned verbatim (still URI-encoded).
+
+```ts
+import { cookies } from 'next/headers';
+import { parseSetCookie } from '@consentify/core';
+
+const cookieStore = await cookies();
+const { name, value, options } = parseSetCookie(consent.acceptAll(cookieStore.toString()));
+cookieStore.set(name, decodeURIComponent(value), options); // Next.js re-encodes values
+```
+
 ## `enableConsentMode(instance, options)`
 
 Wires Google Consent Mode v2 to a consent instance. Returns a dispose function.

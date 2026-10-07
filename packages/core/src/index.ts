@@ -72,6 +72,7 @@ export { ConsentifyConfigError } from './internal/types';
 // Re-export the side feature modules.
 export { verifyProof } from './internal/crypto';
 export { stableStringify, fnv1a, hashPolicy } from './internal/util';
+export { parseSetCookie } from './internal/cookie';
 export {
     enableConsentMode,
     defaultConsentModeMapping,

@@ -343,12 +343,15 @@ For non-bundled apps (WordPress, static sites), load the IIFE build directly:
 
 The IIFE bundle is ~4.3kb gzipped and exposes all exports on the `Consentify` global.
 
-For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~5.3kb gzipped). It exposes the same exports plus `createCloudConsentify`:
+For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~5.6kb gzipped). It exposes the same exports plus `createCloudConsentify`:
 
 ```html
 <script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>
 <script>
-  Consentify.createCloudConsentify({ siteId: 'your-site-id' }).then(function (consent) {
+  Consentify.createCloudConsentify({
+    siteId: 'your-site-id',
+    fallback: { categories: ['analytics'], identifier: 'your-published-policy-identifier' },
+  }).then(function (consent) {
     consent.guard('analytics', function () {
       // Load analytics script
     });
@@ -378,15 +381,19 @@ See [MDN: Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Se
 
 ## Cloud Mode (`@consentify/core/cloud`)
 
-Cloud (SaaS) mode is a separate entry point, so self-hosted apps never bundle it. `createCloudConsentify` fetches your SiteConfig, derives the policy from it, and reports consent decisions to the ingest endpoint. It resolves to the same instance type as `createConsentify`:
+Cloud (SaaS) mode is a separate entry point, so self-hosted apps never bundle it. `createCloudConsentify` loads your SiteConfig (cached, from the CDN, or from the required local `fallback` when the CDN is unreachable), derives the policy from it, and reports consent decisions to the ingest endpoint. It resolves to the same instance type as `createConsentify`, plus `consent.cloud` (`source` and `config`):
 
 ```ts
 import { createCloudConsentify } from '@consentify/core/cloud';
 
-const consent = await createCloudConsentify({ siteId: 'your-site-id', apiKey: 'sk_live_...' });
+const consent = await createCloudConsentify({
+  siteId: 'your-site-id',
+  apiKey: 'sk_live_...',
+  fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
+});
 ```
 
-> **v3:** `createConsentify({ siteId })` now throws `ConsentifyConfigError`. Switch to `createCloudConsentify` from `@consentify/core/cloud` with the same options. The hosted platform is not live yet; see the [API reference](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md#createcloudconsentifyinit--consentifycorecloud).
+> **v3:** `createConsentify({ siteId })` now throws `ConsentifyConfigError`. Switch to `createCloudConsentify` from `@consentify/core/cloud` and add the required `fallback`. The hosted platform is not live yet; see the [API reference](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md#createcloudconsentifyinit--consentifycorecloud).
 
 ## How It Works
 

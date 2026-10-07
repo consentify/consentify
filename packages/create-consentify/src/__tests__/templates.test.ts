@@ -74,9 +74,13 @@ describe('generateConsentConfig', () => {
         expect(out).toContain(`process.env.PUBLIC_CONSENTIFY_SITE_ID!`);
     });
 
-    it('omits categories literal in SaaS mode (fetched from SiteConfig)', () => {
-        const out = generateConsentConfig(ctx({ useSaas: true }));
-        expect(out).not.toContain(`categories:`);
+    it('emits the required fallback from the picked categories and mode in SaaS mode', () => {
+        const out = generateConsentConfig(ctx({ useSaas: true, mode: 'opt-out', categories: ['analytics'] }));
+        expect(out).toContain(`fallback: {\n        categories: ['analytics'],\n        mode: 'opt-out',\n`);
+        expect(out).toContain(`// identifier: 'your-policy-identifier'`);
+        // Categories appear only in the fallback; the live ones come from SiteConfig.
+        expect(out.match(/categories:/g)).toHaveLength(1);
+        expect(out).not.toContain(`policy:`);
     });
 
     it('uses bare CONSENTIFY_SITE_ID (no prefix) for remix', () => {
@@ -116,6 +120,7 @@ describe('generateVanillaConfig', () => {
         expect(out).toContain(`import { createCloudConsentify } from '@consentify/core/cloud';`);
         expect(out).toContain(`await createCloudConsentify({`);
         expect(out).not.toContain(`createConsentify(`);
+        expect(out).toContain(`fallback: {\n        categories: ['analytics', 'marketing'],\n        mode: 'opt-in',\n`);
     });
 
     it('imports createConsentify from core when self-hosted', () => {

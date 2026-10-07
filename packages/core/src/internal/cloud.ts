@@ -1,14 +1,20 @@
 import type { ConsentMode, ConsentState, UserCategory } from './types';
-import { ConsentifyConfigError } from './types';
-import { TAG, canLocalStorage, isBrowser, logW } from './util';
+import { canLocalStorage, isBrowser, logW } from './util';
 import { generateVisitorId, readOrCreateStoredVisitorId } from './visitor';
 
+/**
+ * Site configuration published to the CDN. Fields beyond these pass through
+ * unchanged, so new optional fields can be added without breaking caches.
+ */
 export interface SiteConfig {
     categories: readonly string[];
     policyIdentifier: string;
     mode?: ConsentMode;
     consentMaxAgeDays?: number;
 }
+
+/** Where a cloud instance got its SiteConfig from. */
+export type SiteConfigSource = 'network' | 'cache' | 'stale' | 'fallback';
 
 export const DEFAULT_CONFIG_ENDPOINT = 'https://cdn.consentify.dev';
 export const DEFAULT_INGEST_ENDPOINT = 'https://ingest.consentify.dev';
@@ -140,36 +146,95 @@ export function startCloudReporting<T extends UserCategory>(
     return instance.subscribe(() => { send(instance.get()); });
 }
 
-export async function fetchSiteConfig(
+// --- SiteConfig loading -----------------------------------------------------
+// Two-hop CDN protocol: `/config/<siteId>/latest.json` (short CDN TTL) names
+// the current hash; `/config/<siteId>/<hash>.json` is immutable.
+
+/** Cache record: fetched-at (epoch ms), `latest.json` hash, SiteConfig. */
+export interface CachedSiteConfig { t: number; h: string; c: SiteConfig }
+
+export const CONFIG_CACHE_PREFIX = 'consentify_cfg_';
+
+const isSiteConfig = (c?: Partial<SiteConfig> | null): c is SiteConfig =>
+    !!c && Array.isArray(c.categories) && typeof c.policyIdentifier === 'string';
+
+/**
+ * Fetch the current SiteConfig within one `timeoutMs` deadline for both hops.
+ * When `latest.json` still names `prev.h`, the second hop is skipped. Never
+ * rejects: resolves `null` on network error, timeout, non-OK status or a
+ * malformed body.
+ */
+export function fetchSiteConfig(
+    base: string,
+    timeoutMs: number,
+    prev?: CachedSiteConfig,
+): Promise<CachedSiteConfig | null> {
+    const ctl = new AbortController();
+    const get = (file: string): Promise<unknown> =>
+        fetch(base + file, { signal: ctl.signal }).then(r => (r.ok ? r.json() : null));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+        (async () => {
+            const h = ((await get('latest.json')) as { current?: unknown } | null)?.current;
+            if (typeof h !== 'string' || !h) return null;
+            const c = (prev?.h === h ? prev.c : await get(h + '.json')) as Partial<SiteConfig> | null;
+            return isSiteConfig(c) ? { t: Date.now(), h, c } : null;
+        })().catch(() => null),
+        // Aborting also cancels a request or body read still in flight.
+        new Promise<null>(r => { timer = setTimeout(() => { ctl.abort(); r(null); }, timeoutMs); }),
+    ]).finally(() => clearTimeout(timer));
+}
+
+interface ConfigSlot { e?: CachedSiteConfig; p?: Promise<CachedSiteConfig | null> }
+// Server-side memo keyed by `endpoint|siteId`, so SSR does not fetch per request.
+const serverMemo = new Map<string, ConfigSlot>();
+
+/**
+ * Resolve a SiteConfig with stale-while-revalidate caching: localStorage
+ * (`consentify_cfg_<siteId>`) in the browser, an in-module Map elsewhere
+ * (concurrent calls share one in-flight request). Fresh cache: no network.
+ * Stale cache: returned at once and refreshed in the background (the cache
+ * only; a running instance keeps its policy). No cache: wait for the network.
+ * Resolves `['fallback']` when nothing usable is available.
+ */
+export async function loadSiteConfig(
     siteId: string,
-    configEndpoint: string,
-): Promise<SiteConfig> {
-    const base = `${configEndpoint.replace(/\/$/, '')}/config/${siteId}/`;
-    // One fetch helper for both hops; the error text only travels as `cause`.
-    const get = async <J>(file: string): Promise<J> => {
-        const res = await fetch(base + file);
-        if (!res.ok) throw new Error(`${file} ${res.status}`);
-        return res.json() as Promise<J>;
-    };
-    try {
-        const latest = await get<{ current?: string }>('latest.json');
-        if (!latest || typeof latest.current !== 'string' || !latest.current) {
-            throw new Error('latest.json: no current');
-        }
-        const cfg = await get<Partial<SiteConfig>>(`${latest.current}.json`);
-        if (!cfg || !Array.isArray(cfg.categories) || typeof cfg.policyIdentifier !== 'string') {
-            throw new Error('bad SiteConfig');
-        }
-        return {
-            categories: cfg.categories,
-            policyIdentifier: cfg.policyIdentifier,
-            mode: cfg.mode,
-            consentMaxAgeDays: cfg.consentMaxAgeDays,
-        };
-    } catch (cause) {
-        throw new ConsentifyConfigError(
-            TAG + `Failed to fetch SiteConfig for "${siteId}"`,
-            { cause },
-        );
+    endpoint: string,
+    timeoutMs: number,
+    ttlMs: number,
+): Promise<[SiteConfigSource, SiteConfig?]> {
+    const lsKey = CONFIG_CACHE_PREFIX + siteId;
+    const browser = isBrowser();
+    const ls = browser && canLocalStorage();
+    let slot: ConfigSlot = {};
+    if (!browser) {
+        const k = endpoint + '|' + siteId;
+        slot = serverMemo.get(k) ?? slot;
+        serverMemo.set(k, slot);
+    } else if (ls) {
+        try {
+            const e = JSON.parse(window.localStorage.getItem(lsKey) as string);
+            if (isSiteConfig(e?.c)) slot.e = e;
+        } catch { /* blocked or corrupt: no cache */ }
     }
+    const cached = slot.e;
+    // A non-numeric or future `t` (clock moved back) yields NaN/negative: stale.
+    const age = cached ? Date.now() - cached.t : -1;
+    if (cached && age >= 0 && age < ttlMs) return ['cache', cached.c];
+    if (!slot.p) {
+        slot.p = fetchSiteConfig(`${endpoint.replace(/\/$/, '')}/config/${siteId}/`, timeoutMs, cached)
+            .then(e => {
+                slot.p = undefined;
+                if (e) {
+                    slot.e = e;
+                    try {
+                        if (ls) window.localStorage.setItem(lsKey, JSON.stringify(e));
+                    } catch { /* quota or blocked: the cache is best effort */ }
+                }
+                return e;
+            });
+    }
+    if (cached) return ['stale', cached.c];
+    const fresh = await slot.p;
+    return fresh ? ['network', fresh.c] : ['fallback'];
 }

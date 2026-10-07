@@ -2305,11 +2305,11 @@ describe('Cloud mode (Mode B)', () => {
         vi.stubGlobal('BroadcastChannel', undefined);
     });
     afterEach(() => {
+        vi.unstubAllGlobals(); // first: server tests stub `document` away
         clearAllCookies();
         localStorage.clear();
         globalThis.fetch = originalFetch;
         vi.restoreAllMocks();
-        vi.unstubAllGlobals();
         vi.useRealTimers();
     });
 
@@ -2338,15 +2338,37 @@ describe('Cloud mode (Mode B)', () => {
         return spy;
     };
 
+    const EP = { config: 'https://cdn.test', ingest: 'https://ingest.test' };
+    const FB = { categories: ['analytics'], identifier: 'v1' };
+    const CACHE_KEY = 'consentify_cfg_site_abc';
+    const seedCache = (ageMs: number, h: string, c: { categories: string[]; policyIdentifier: string }) =>
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now() - ageMs, h, c }));
+    const readCache = () => JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null');
+    const HOUR = 3_600_000;
+    // A fetch whose responses wait until `release()`; `respond` maps URL to a JSON body.
+    const gatedFetch = (respond: (url: string) => unknown) => {
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        const spy = vi.fn(async (url: string) => {
+            await gate;
+            return new Response(JSON.stringify(respond(url)));
+        });
+        vi.stubGlobal('fetch', spy);
+        return { spy, release };
+    };
+
     it('returns a Promise when siteId is provided', async () => {
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         const promise = createCloudConsentify({
             siteId: 'site_abc',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         });
         expect(promise).toBeInstanceOf(Promise);
         const c = await promise;
         expect(c.policy.identifier).toBe('v1');
+        expect(c.cloud.source).toBe('network');
+        expect(c.cloud.config.policyIdentifier).toBe('v1');
         expect(spy.mock.calls[0][0]).toBe('https://cdn.test/config/site_abc/latest.json');
         expect(spy.mock.calls[1][0]).toBe('https://cdn.test/config/site_abc/abc123.json');
     });
@@ -2355,7 +2377,8 @@ describe('Cloud mode (Mode B)', () => {
         stubConfigFetch({ categories: ['analytics', 'marketing'], policyIdentifier: 'v2' });
         const c = await createCloudConsentify({
             siteId: 'site_abc',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         });
         expect(c.policy.categories).toEqual(['analytics', 'marketing']);
     });
@@ -2365,30 +2388,230 @@ describe('Cloud mode (Mode B)', () => {
         const c = await createCloudConsentify({
             siteId: 'site_abc',
             mode: 'opt-out',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         });
         expect(c.mode).toBe('opt-out');
     });
 
-    it('throws ConsentifyConfigError on fetch failure', async () => {
-        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
-        await expect(createCloudConsentify({
-            siteId: 'site_abc',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
-        })).rejects.toThrow(ConsentifyConfigError);
+    it('rejects with ConsentifyConfigError when fallback is missing', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        await expect(createCloudConsentify({ siteId: 'site_abc', endpoints: EP } as any))
+            .rejects.toThrow(ConsentifyConfigError);
+        expect(spy).not.toHaveBeenCalled();
     });
 
-    it('throws ConsentifyConfigError when latest.json is malformed', async () => {
+    it('falls back on a network error without throwing, with one warning', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+        const c = await createCloudConsentify({
+            siteId: 'site_abc',
+            endpoints: EP,
+            fallback: { categories: ['analytics', 'marketing'], identifier: 'v1', mode: 'opt-out' },
+        });
+        expect(c.cloud.source).toBe('fallback');
+        expect(c.policy.categories).toEqual(['analytics', 'marketing']);
+        expect(c.policy.identifier).toBe('v1');
+        expect(c.mode).toBe('opt-out');
+        expect(c.cloud.config).toEqual({
+            categories: ['analytics', 'marketing'],
+            policyIdentifier: 'v1',
+            mode: 'opt-out',
+            consentMaxAgeDays: undefined,
+        });
+        expect(warn).toHaveBeenCalledOnce();
+        expect(warn.mock.calls[0][0]).toContain('using fallback');
+        expect(readCache()).toBeNull();
+    });
+
+    it('fallback without identifier hashes its categories like self-hosted mode', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+        const c = await createCloudConsentify({
+            siteId: 'site_abc',
+            endpoints: EP,
+            fallback: { categories: ['analytics'] },
+        });
+        expect(c.policy.identifier).toBe(hashPolicy(['analytics']));
+        expect(c.cloud.config.policyIdentifier).toBe(c.policy.identifier);
+    });
+
+    it('falls back after timeoutMs (default 3000) and aborts the request', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        let signal: AbortSignal | null | undefined;
+        vi.stubGlobal('fetch', vi.fn((_url: string, opts?: RequestInit) => {
+            signal = opts?.signal;
+            return new Promise(() => {}); // never settles on its own
+        }));
+        let settled = false;
+        const p = createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        void p.then(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(2999);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        const c = await p;
+        expect(c.cloud.source).toBe('fallback');
+        expect(signal?.aborted).toBe(true);
+    });
+
+    it('honors a custom timeoutMs', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+        const p = createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB, timeoutMs: 50 });
+        await vi.advanceTimersByTimeAsync(50);
+        expect((await p).cloud.source).toBe('fallback');
+    });
+
+    it('falls back when latest.json answers 500', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('err', { status: 500 }))));
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('fallback');
+    });
+
+    it('falls back when latest.json is malformed', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.stubGlobal('fetch', vi.fn((url: string) => {
             if (url.endsWith('/latest.json')) {
                 return Promise.resolve(new Response(JSON.stringify({ wrong: 'shape' })));
             }
             return Promise.resolve(new Response('ok'));
         }));
-        await expect(createCloudConsentify({
+        const c = await createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test' },
-        })).rejects.toThrow(ConsentifyConfigError);
+            fallback: FB,
+        });
+        expect(c.cloud.source).toBe('fallback');
+    });
+
+    it('falls back when the versioned config is malformed or not JSON', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        for (const body of [JSON.stringify({ categories: 'analytics', policyIdentifier: 'v1' }), 'not json']) {
+            vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(new Response(
+                url.endsWith('/latest.json') ? JSON.stringify({ current: 'h1' }) : body,
+            ))));
+            const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+            expect(c.cloud.source).toBe('fallback');
+        }
+    });
+
+    it('caches the fetched SiteConfig with its hash in localStorage', async () => {
+        stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        const cached = readCache();
+        expect(cached.h).toBe('abc123');
+        expect(cached.c).toEqual({ categories: ['analytics'], policyIdentifier: 'v1' });
+        expect(Date.now() - cached.t).toBeLessThan(1000);
+    });
+
+    it('uses a fresh cache without any network request', async () => {
+        seedCache(60_000, 'h0', { categories: ['analytics', 'marketing'], policyIdentifier: 'v0' });
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('cache');
+        expect(c.policy.identifier).toBe('v0');
+        expect(c.policy.categories).toEqual(['analytics', 'marketing']);
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('ignores a corrupt cache entry', async () => {
+        localStorage.setItem(CACHE_KEY, '{not json');
+        stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('network');
+        expect(readCache().h).toBe('abc123');
+    });
+
+    it('serves a stale cache at once and refreshes the cache in the background', async () => {
+        seedCache(2 * HOUR, 'old', { categories: ['analytics'], policyIdentifier: 'v0' });
+        const { spy, release } = gatedFetch(url => url.endsWith('/latest.json')
+            ? { current: 'new' }
+            : { categories: ['analytics', 'marketing'], policyIdentifier: 'v2' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        // Resolved while the revalidation request is still pending.
+        expect(c.cloud.source).toBe('stale');
+        expect(c.policy.identifier).toBe('v0');
+        expect(spy).toHaveBeenCalledOnce();
+        release();
+        await vi.waitFor(() => expect(readCache().h).toBe('new'));
+        expect(readCache().c.policyIdentifier).toBe('v2');
+        expect(spy.mock.calls[1][0]).toBe('https://cdn.test/config/site_abc/new.json');
+        // The running instance keeps its policy; the next load picks up v2.
+        expect(c.policy.identifier).toBe('v0');
+        const next = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(next.cloud.source).toBe('cache');
+        expect(next.policy.identifier).toBe('v2');
+    });
+
+    it('revalidation with an unchanged hash makes one request', async () => {
+        seedCache(2 * HOUR, 'abc123', { categories: ['analytics'], policyIdentifier: 'v1' });
+        const before = readCache().t;
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('stale');
+        await vi.waitFor(() => expect(readCache().t).toBeGreaterThan(before));
+        expect(spy).toHaveBeenCalledOnce();
+        expect(spy.mock.calls[0][0]).toBe('https://cdn.test/config/site_abc/latest.json');
+    });
+
+    it('keeps a stale cache when the background refresh fails', async () => {
+        seedCache(2 * HOUR, 'h0', { categories: ['analytics'], policyIdentifier: 'v0' });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const spy = vi.fn(() => Promise.reject(new Error('network down')));
+        vi.stubGlobal('fetch', spy);
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('stale');
+        await vi.waitFor(() => expect(spy).toHaveBeenCalled());
+        await new Promise(r => setTimeout(r, 0));
+        expect(readCache().h).toBe('h0');
+        expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('server: concurrent calls share one in-flight SiteConfig request', async () => {
+        vi.stubGlobal('document', undefined); // isBrowser() === false
+        const { spy, release } = gatedFetch(url => url.endsWith('/latest.json')
+            ? { current: 'h1' }
+            : { categories: ['analytics'], policyIdentifier: 'v1' });
+        const init = { siteId: 'srv_inflight', endpoints: EP, fallback: FB };
+        const both = Promise.all([createCloudConsentify(init), createCloudConsentify(init)]);
+        release();
+        const [a, b] = await both;
+        expect([a.cloud.source, b.cloud.source]).toEqual(['network', 'network']);
+        expect(spy).toHaveBeenCalledTimes(2); // latest.json + h1.json, once
+        const c = await createCloudConsentify(init);
+        expect(c.cloud.source).toBe('cache');
+        expect(spy).toHaveBeenCalledTimes(2);
+        expect(localStorage.getItem('consentify_cfg_srv_inflight')).toBeNull();
+    });
+
+    it('server: memo honors configTtlSec with stale-while-revalidate', async () => {
+        vi.stubGlobal('document', undefined);
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const init = { siteId: 'srv_ttl', endpoints: EP, fallback: FB, configTtlSec: 60 };
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        expect((await createCloudConsentify(init)).cloud.source).toBe('network');
+        vi.setSystemTime(t0 + 59_000);
+        expect((await createCloudConsentify(init)).cloud.source).toBe('cache');
+        expect(spy).toHaveBeenCalledTimes(2);
+        vi.setSystemTime(t0 + 61_000);
+        expect((await createCloudConsentify(init)).cloud.source).toBe('stale');
+        await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(3)); // hash unchanged: latest.json only
+        await new Promise(r => setTimeout(r, 0));
+        expect((await createCloudConsentify(init)).cloud.source).toBe('cache');
+        expect(spy).toHaveBeenCalledTimes(3);
+    });
+
+    it('server: a different endpoint is a separate memo entry', async () => {
+        vi.stubGlobal('document', undefined);
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        await createCloudConsentify({ siteId: 'srv_ep', endpoints: EP, fallback: FB });
+        const c = await createCloudConsentify({ siteId: 'srv_ep', endpoints: { config: 'https://cdn2.test' }, fallback: FB });
+        expect(c.cloud.source).toBe('network');
+        expect(spy).toHaveBeenCalledTimes(4);
     });
 
     it('POSTs events to the ingest endpoint on consent change', async () => {
@@ -2397,7 +2620,8 @@ describe('Cloud mode (Mode B)', () => {
         const c = await createCloudConsentify({
             siteId: 'site_abc',
             apiKey: 'sk_test',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         });
         c.set({ analytics: true });
         await vi.waitFor(() => {
@@ -2432,7 +2656,8 @@ describe('Cloud mode (Mode B)', () => {
 
         const c = await createCloudConsentify({
             siteId: 'site_abc',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         });
         c.set({ analytics: true });
         await vi.waitFor(() => {
@@ -2445,7 +2670,8 @@ describe('Cloud mode (Mode B)', () => {
         });
     });
 
-    it('throws ConsentifyConfigError when the versioned config fetch returns non-200', async () => {
+    it('falls back when the versioned config fetch returns non-200', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.stubGlobal('fetch', vi.fn((url: string) => {
             if (url.endsWith('/latest.json')) {
                 return Promise.resolve(new Response(JSON.stringify({ current: 'h1' })));
@@ -2453,10 +2679,12 @@ describe('Cloud mode (Mode B)', () => {
             // hash.json returns 404
             return Promise.resolve(new Response('not found', { status: 404 }));
         }));
-        await expect(createCloudConsentify({
+        const c = await createCloudConsentify({
             siteId: 'site_abc',
             endpoints: { config: 'https://cdn.test' },
-        })).rejects.toThrow(ConsentifyConfigError);
+            fallback: FB,
+        });
+        expect(c.cloud.source).toBe('fallback');
     });
 
     const ingestCalls = (spy: ReturnType<typeof vi.fn>) =>
@@ -2467,7 +2695,8 @@ describe('Cloud mode (Mode B)', () => {
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         const c = await createCloudConsentify({
             siteId: 'site_abc',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         });
         const t0 = Date.now();
         vi.setSystemTime(t0);
@@ -2488,7 +2717,8 @@ describe('Cloud mode (Mode B)', () => {
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         const init = {
             siteId: 'site_abc',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         };
         const tab1 = await createCloudConsentify(init);
         const tab2 = await createCloudConsentify(init);
@@ -2508,7 +2738,8 @@ describe('Cloud mode (Mode B)', () => {
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         const init = {
             siteId: 'site_abc',
-            endpoints: { config: 'https://cdn.test', ingest: 'https://ingest.test' },
+            endpoints: EP,
+            fallback: FB,
         };
         const c = await createCloudConsentify(init);
         c.set({ analytics: true });

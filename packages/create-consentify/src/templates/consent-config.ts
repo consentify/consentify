@@ -15,6 +15,20 @@ function categoriesLiteral(categories: readonly string[]): string {
     return categories.map((c) => `'${c}'`).join(', ');
 }
 
+// Local policy `createCloudConsentify` uses when the CDN is unreachable and
+// nothing is cached; built from the categories/mode picked in the wizard.
+export function fallbackBlock(ctx: TemplateContext, indent: string): string {
+    return [
+        `// Used when the CDN is unreachable and no SiteConfig is cached.`,
+        `fallback: {`,
+        `    categories: [${categoriesLiteral(ctx.categories)}],`,
+        `    mode: '${ctx.mode}',`,
+        `    // Set to your published policy identifier so returning visitors keep their consent:`,
+        `    // identifier: 'your-policy-identifier',`,
+        `},`,
+    ].map((l) => indent + l).join('\n');
+}
+
 function gcmBlock(ctx: TemplateContext): string {
     if (!ctx.enableGcm) return '';
     return `
@@ -50,6 +64,7 @@ export const consent = await createCloudConsentify({
     siteId: ${siteIdExpr},
     apiKey: ${apiKeyExpr},
     mode: '${ctx.mode}',
+${fallbackBlock(ctx, '    ')}
 });
 `;
         return [header, body, gcmBlock(ctx)]

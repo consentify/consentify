@@ -342,7 +342,7 @@ For non-bundled apps (WordPress, static sites), load the IIFE build directly:
 
 The IIFE bundle is ~4.4kb gzipped and exposes all exports on the `Consentify` global.
 
-For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~5.9kb gzipped). It exposes the same exports plus `createCloudConsentify`:
+For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~6.1kb gzipped). It exposes the same exports plus `createCloudConsentify`:
 
 ```html
 <script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>
@@ -387,12 +387,12 @@ import { createCloudConsentify } from '@consentify/core/cloud';
 
 const consent = await createCloudConsentify({
   siteId: 'your-site-id',
-  apiKey: 'sk_live_...',
+  publicKey: 'pk_live_...', // optional; sent as a header with browser events
   fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
 });
 ```
 
-> **v3:** `createConsentify({ siteId })` now throws `ConsentifyConfigError`. Switch to `createCloudConsentify` from `@consentify/core/cloud` and add the required `fallback`. The hosted platform is not live yet; see the [API reference](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md#createcloudconsentifyinit--consentifycorecloud).
+> **v3:** `createConsentify({ siteId })` now throws `ConsentifyConfigError`. Switch to `createCloudConsentify` from `@consentify/core/cloud`, add the required `fallback` and rename `apiKey` to `publicKey`. The hosted platform is not live yet; see the [API reference](https://github.com/consentify/consentify/blob/main/docs/guides/api-reference.md#createcloudconsentifyinit--consentifycorecloud).
 
 ## How It Works
 

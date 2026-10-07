@@ -33,7 +33,7 @@ export const vanilla: FrameworkScaffolder = {
                 `    <script>`,
                 `      Consentify.createCloudConsentify({`,
                 `        siteId: '${ctx.siteId ?? 'your-site-id-here'}',`,
-                ...(ctx.apiKey ? [`        apiKey: '${ctx.apiKey}',`] : []),
+                ...(ctx.publicKey ? [`        publicKey: '${ctx.publicKey}',`] : []),
                 `        mode: '${ctx.mode}',`,
                 `        // Used when the CDN is unreachable and no SiteConfig is cached.`,
                 `        fallback: { categories: ${JSON.stringify(ctx.categories)}, mode: '${ctx.mode}' },`,

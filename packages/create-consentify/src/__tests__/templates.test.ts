@@ -54,7 +54,8 @@ describe('generateConsentConfig', () => {
         expect(out).toContain(`await createCloudConsentify({`);
         expect(out).not.toContain(`createConsentify(`);
         expect(out).toContain(`siteId: process.env.NEXT_PUBLIC_CONSENTIFY_SITE_ID!`);
-        expect(out).toContain(`apiKey: process.env.NEXT_PUBLIC_CONSENTIFY_API_KEY`);
+        expect(out).toContain(`publicKey: process.env.NEXT_PUBLIC_CONSENTIFY_PUBLIC_KEY`);
+        expect(out).not.toContain(`apiKey`);
     });
 
     it('imports enableConsentMode from core alongside the cloud factory', () => {
@@ -150,9 +151,10 @@ describe('generateEnvExample', () => {
     });
 
     it('emits Next.js-style keys when SaaS enabled', () => {
-        const out = generateEnvExample(ctx({ useSaas: true, siteId: 'abc', apiKey: 'sk_1' }));
+        const out = generateEnvExample(ctx({ useSaas: true, siteId: 'abc', publicKey: 'pk_1' }));
         expect(out).toContain('NEXT_PUBLIC_CONSENTIFY_SITE_ID=abc');
-        expect(out).toContain('NEXT_PUBLIC_CONSENTIFY_API_KEY=sk_1');
+        expect(out).toContain('NEXT_PUBLIC_CONSENTIFY_PUBLIC_KEY=pk_1');
+        expect(out).not.toContain('API_KEY');
     });
 
     it('emits bare keys for remix (no env prefix)', () => {

@@ -19,13 +19,13 @@ ${formatGcmMapping(ctx.categories, '        ')}
 
     if (ctx.useSaas) {
         const siteId = ctx.siteId ?? 'your-site-id-here';
-        const apiKeyLine = ctx.apiKey ? `\n    apiKey: '${ctx.apiKey}',` : '';
+        const publicKeyLine = ctx.publicKey ? `\n    publicKey: '${ctx.publicKey}',` : '';
         return `${imports}
 
 // SaaS mode: categories + policy version are fetched from consentify.dev on init.
 // Top-level await requires ESM ("type": "module") - standard for modern toolchains.
 export const consent = await createCloudConsentify({
-    siteId: '${siteId}',${apiKeyLine}
+    siteId: '${siteId}',${publicKeyLine}
     mode: '${ctx.mode}',
 ${fallbackBlock(ctx, '    ')}
 });

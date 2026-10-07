@@ -24,7 +24,7 @@ export async function run(flags: ParsedFlags = {}): Promise<void> {
         enableGcm: answers.enableGcm,
         useSaas: answers.useSaas,
         siteId: answers.siteId,
-        apiKey: answers.apiKey,
+        publicKey: answers.publicKey,
         srcDir: detectSrcDir(cwd),
     };
 
@@ -113,7 +113,7 @@ async function resolveAnswers(
             enableGcm: merged.enableGcm ?? false,
             useSaas: merged.useSaas ?? false,
             siteId: merged.siteId,
-            apiKey: merged.apiKey,
+            publicKey: merged.publicKey,
             packageManager: merged.packageManager!,
         };
     }
@@ -129,7 +129,7 @@ async function resolveAnswers(
         enableGcm: flags.enableGcm,
         useSaas: flags.useSaas,
         siteId: flags.siteId,
-        apiKey: flags.apiKey,
+        publicKey: flags.publicKey,
         packageManager: flags.packageManager ?? detectedPm ?? undefined,
         detectedPm: detectedPm ?? undefined,
         detectedFramework: detectedFramework ?? undefined,

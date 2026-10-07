@@ -4,12 +4,12 @@ export function generateEnvExample(ctx: TemplateContext): string | null {
     if (!ctx.useSaas) return null;
     const prefix = envPrefix(ctx.framework);
     const siteIdKey = `${prefix}CONSENTIFY_SITE_ID`;
-    const apiKeyKey = `${prefix}CONSENTIFY_API_KEY`;
+    const publicKeyKey = `${prefix}CONSENTIFY_PUBLIC_KEY`;
     const siteIdValue = ctx.siteId ?? 'your-site-id-here';
-    const apiKeyValue = ctx.apiKey ?? '';
+    const publicKeyValue = ctx.publicKey ?? '';
 
-    return `# Consentify dashboard credentials
+    return `# Consentify dashboard credentials (both are public: they ship in the client bundle)
 ${siteIdKey}=${siteIdValue}
-${apiKeyKey}=${apiKeyValue}
+${publicKeyKey}=${publicKeyValue}
 `;
 }

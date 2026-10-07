@@ -3,9 +3,9 @@
 > **Deprecated.** This package is a no-op as of `v2.0.0`. It is kept in the
 > registry only because npm blocks unpublishing packages older than 72 hours.
 
-All cloud functionality (event reporting, visitor hash, deduplication, retry
-buffer) has moved to `@consentify/core` and is automatically enabled when you
-construct an instance with a `siteId`.
+All cloud functionality (event reporting, visitor id, deduplication, retry
+buffer) has moved to `@consentify/core`. Cloud mode is its own entry point,
+`@consentify/core/cloud`, with the `createCloudConsentify` factory.
 
 ## Migration
 
@@ -22,26 +22,30 @@ const consent = createConsentify({
 enableCloud(consent, { siteId: 'site_xxx', apiKey: 'ck_xxx' });
 ```
 
-**After:**
+**After (`@consentify/core` v3):**
 
 ```ts
-import { createConsentify } from '@consentify/core';
+import { createCloudConsentify } from '@consentify/core/cloud';
 
-const consent = await createConsentify({
+const consent = await createCloudConsentify({
   siteId: 'site_xxx',
-  apiKey: 'ck_xxx',
+  publicKey: 'pk_xxx', // optional
+  // Required: used when the CDN is unreachable and nothing is cached.
+  fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
 });
 ```
 
-`createConsentify({ siteId })` is async: it fetches your `SiteConfig` from the
-CDN, derives `policy.categories` + `mode` from it, and starts the cloud event
-reporter automatically. Any options you would have passed to `enableCloud` are
-supplied at the `createConsentify` call site instead.
+`createCloudConsentify` is async: it loads your `SiteConfig` (from cache, the
+CDN, or the local `fallback`), derives `policy.categories` and `mode` from it,
+and starts the cloud event reporter automatically in the browser. Any options
+you would have passed to `enableCloud` are supplied at the
+`createCloudConsentify` call site instead. `createConsentify({ siteId })` from
+`@consentify/core` throws in v3.
 
 ## What happens if you keep calling `enableCloud`?
 
 It logs a deprecation warning and returns a no-op disposer. No network
-requests. No visitor hash is generated. Nothing is reported.
+requests. No visitor id is generated. Nothing is reported.
 
 Remove the dependency from your `package.json` at your earliest convenience:
 
@@ -52,4 +56,4 @@ npm uninstall @consentify/cloud
 ```
 
 See the main [consentify repo](https://github.com/consentify/consentify) for
-full documentation of `@consentify/core` Mode B.
+full documentation of `@consentify/core/cloud`.

@@ -41,7 +41,7 @@ npx create-consentify@latest \
   --mode opt-in \
   --gcm \
   --site-id site_xxx \
-  --api-key sk_xxx \
+  --public-key pk_xxx \
   --pm pnpm \
   --yes
 ```
@@ -55,7 +55,7 @@ All flags are optional; any missing flag triggers a prompt (unless `--yes` is se
 | `--mode`       | `opt-in` (GDPR, default) \| `opt-out` (CCPA)                       |
 | `--gcm`        | Enable Google Consent Mode v2 wiring                               |
 | `--site-id`    | Consentify dashboard Site ID (implies SaaS mode)                   |
-| `--api-key`    | Dashboard API key (optional)                                       |
+| `--public-key` | Dashboard public key (optional; renamed from `--api-key`)          |
 | `--pm`         | `pnpm` \| `npm` \| `yarn` \| `bun`                                 |
 | `--cwd`        | Target project directory (default: `process.cwd()`)                |
 | `--yes`        | Skip prompts when required flags are provided                      |

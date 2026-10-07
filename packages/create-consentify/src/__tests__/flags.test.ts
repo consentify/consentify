@@ -38,6 +38,16 @@ describe('normalizeFlags', () => {
         expect(out.useSaas).toBe(true);
     });
 
+    it('parses --public-key and enables SaaS', () => {
+        expect(normalizeFlags({ 'public-key': 'pk_1' })).toEqual({ publicKey: 'pk_1', useSaas: true });
+    });
+
+    it('rejects the removed --api-key with a hint to --public-key', () => {
+        expect(() => normalizeFlags({ 'api-key': 'sk_1' })).toThrow(/renamed to --public-key/);
+        // citty parses `--api-key value` for an unknown flag as `true`.
+        expect(() => normalizeFlags({ 'api-key': true })).toThrow(/renamed to --public-key/);
+    });
+
     it('parses package manager', () => {
         expect(normalizeFlags({ pm: 'bun' })).toEqual({ packageManager: 'bun' });
     });

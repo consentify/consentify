@@ -35,6 +35,8 @@ export const vanilla: FrameworkScaffolder = {
                 `        siteId: '${ctx.siteId ?? 'your-site-id-here'}',`,
                 ...(ctx.apiKey ? [`        apiKey: '${ctx.apiKey}',`] : []),
                 `        mode: '${ctx.mode}',`,
+                `        // Used when the CDN is unreachable and no SiteConfig is cached.`,
+                `        fallback: { categories: ${JSON.stringify(ctx.categories)}, mode: '${ctx.mode}' },`,
                 `      }).then((consent) => {`,
                 `        // wire your banner to consent here`,
                 `      });`,

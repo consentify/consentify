@@ -252,7 +252,7 @@ The closest project in spirit is **c15t** — also headless and TypeScript-based
 
 A hosted consent management platform — the tool developers and marketers use to configure policies, translate banners, and watch opt-in rates. It pairs with this SDK via `createCloudConsentify({ siteId })` from `@consentify/core/cloud`.
 
-> **Not live yet.** Until launch, `createCloudConsentify({ siteId })` will fail against the default endpoints — use self-hosted mode (`createConsentify({ policy })`) today.
+> **Not live yet.** Until launch, `createCloudConsentify({ siteId, fallback })` cannot fetch a SiteConfig from the default endpoints and runs on its local `fallback` policy — use self-hosted mode (`createConsentify({ policy })`) today.
 
 - **Visual banner builder** — drag-and-drop consent UI
 - **Consent analytics dashboard** — see opt-in/out rates

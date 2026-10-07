@@ -1,4 +1,4 @@
-import { sdkImports } from './consent-config.js';
+import { fallbackBlock, sdkImports } from './consent-config.js';
 import { formatGcmMapping } from './gcm-mapping.js';
 import type { TemplateContext } from './types.js';
 
@@ -27,6 +27,7 @@ ${formatGcmMapping(ctx.categories, '        ')}
 export const consent = await createCloudConsentify({
     siteId: '${siteId}',${apiKeyLine}
     mode: '${ctx.mode}',
+${fallbackBlock(ctx, '    ')}
 });
 ${gcmBlock}
 

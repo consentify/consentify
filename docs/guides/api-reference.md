@@ -248,7 +248,7 @@ For non-bundled apps (WordPress, static sites), use the IIFE build:
 </script>
 ```
 
-The IIFE bundle is ~4.3kb gzipped and exposes all exports on the `Consentify` global. It is self-hosted only; for cloud mode load `dist/consentify-cloud.iife.min.js` instead (~5.3kb gzipped), which exposes the same exports plus `Consentify.createCloudConsentify` (see [below](#createcloudconsentifyinit--consentifycorecloud)).
+The IIFE bundle is ~4.3kb gzipped and exposes all exports on the `Consentify` global. It is self-hosted only; for cloud mode load `dist/consentify-cloud.iife.min.js` instead (~5.6kb gzipped), which exposes the same exports plus `Consentify.createCloudConsentify` (see [below](#createcloudconsentifyinit--consentifycorecloud)).
 
 ### CSP nonce + SRI (recommended)
 
@@ -266,9 +266,9 @@ Pair this with a CSP header such as `script-src 'self' 'nonce-%%CSP_NONCE%%'`. G
 
 ## `createCloudConsentify(init)` — `@consentify/core/cloud`
 
-> **⚠️ Not live yet:** The hosted Consentify Dev platform (`cdn.consentify.dev` / `ingest.consentify.dev`) has not launched. Until it does, `createCloudConsentify({ siteId })` against the default endpoints will reject with `ConsentifyConfigError`. Use self-hosted mode (`createConsentify({ policy })`) today, or point `endpoints` at your own infrastructure.
+> **⚠️ Not live yet:** The hosted Consentify Dev platform (`cdn.consentify.dev` / `ingest.consentify.dev`) has not launched. Until it does, `createCloudConsentify({ siteId, fallback })` against the default endpoints cannot fetch a SiteConfig and runs on your `fallback` policy (`consent.cloud.source === 'fallback'`). Use self-hosted mode (`createConsentify({ policy })`) today, or point `endpoints` at your own infrastructure.
 
-Cloud (SaaS) mode ships as a separate entry point so self-hosted apps never bundle it. The factory is async: it fetches your SiteConfig from the CDN, derives `policy` and `mode` from it, and starts event reporting automatically (browser only). It resolves to the same instance type as `createConsentify`.
+Cloud (SaaS) mode ships as a separate entry point so self-hosted apps never bundle it. The factory is async: it loads your SiteConfig (from cache, the CDN, or your local `fallback`), derives `policy` and `mode` from it, and starts event reporting automatically (browser only). It resolves to the same instance type as `createConsentify`, plus a `cloud` property.
 
 ```ts
 import { createCloudConsentify } from '@consentify/core/cloud';
@@ -276,6 +276,11 @@ import { createCloudConsentify } from '@consentify/core/cloud';
 const consent = await createCloudConsentify({
   siteId: 'your-site-id',
   apiKey: 'sk_live_...',  // optional
+  // Required: used when the CDN is unreachable and nothing is cached.
+  fallback: {
+    categories: ['analytics', 'marketing'],
+    identifier: 'your-published-policy-identifier',
+  },
   endpoints: {
     config: 'https://cdn.consentify.dev',
     ingest: 'https://ingest.consentify.dev',
@@ -286,20 +291,43 @@ const consent = await createCloudConsentify({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `siteId` | `string` | *required* | Site whose SiteConfig is fetched and to which events are reported |
+| `fallback` | `{ categories: readonly string[]; identifier?: string; mode?: ConsentMode; consentMaxAgeDays?: number }` | *required* | Local policy used when no SiteConfig is available (network error, timeout, non-OK status, malformed config) and nothing is cached. Set `identifier` to the site's published `policyIdentifier`; otherwise returning visitors see the banner again while the fallback is active |
+| `timeoutMs` | `number` | `3000` | Deadline for the whole two-hop SiteConfig fetch; the requests are aborted when it passes |
+| `configTtlSec` | `number` | `3600` | How long a cached SiteConfig is used without a request. After that it is served stale and refreshed in the background |
 | `apiKey` | `string` | — | API key sent with ingest events |
 | `endpoints.config` | `string` | `https://cdn.consentify.dev` | SiteConfig CDN |
 | `endpoints.ingest` | `string` | `https://ingest.consentify.dev` | Ingest endpoint |
-| `mode`, `consentMaxAgeDays` | | from SiteConfig | Local values override the fetched SiteConfig |
+| `mode`, `consentMaxAgeDays` | | from SiteConfig | Local values override the SiteConfig (or `fallback`) |
 | `cookie`, `expirationWarningDays`, `storage`, `secret`, `adapter`, `visitorId` | | | Same as [`createConsentify`](#createconsentifyinit) |
 
-`policy` is not accepted: categories and the policy identifier come from the SiteConfig. With `secret` (server-only) it resolves to an instance whose `getProof()` is HMAC-signed. The `CloudInit` and `SiteConfig` types are exported from `@consentify/core/cloud`. Core and cloud share one copy of the core code, so `ConsentifyConfigError` from `@consentify/core` matches errors thrown by the cloud factory.
+`policy` is not accepted: categories and the policy identifier come from the SiteConfig. With `secret` (server-only) it resolves to an instance whose `getProof()` is HMAC-signed. The `CloudInit`, `CloudFallback`, `CloudInfo`, `SiteConfig` and `SiteConfigSource` types are exported from `@consentify/core/cloud`. Core and cloud share one copy of the core code, so `ConsentifyConfigError` from `@consentify/core` matches errors thrown by the cloud factory.
+
+#### SiteConfig loading, caching and offline behavior
+
+The SiteConfig comes from two CDN files: `/config/<siteId>/latest.json` (short CDN TTL) names the current hash, and `/config/<siteId>/<hash>.json` is immutable.
+
+- **Browser:** the result is cached in `localStorage` under `consentify_cfg_<siteId>` as `{ t, h, c }` (fetch time, hash, SiteConfig). A fresh entry (younger than `configTtlSec`) is used without any request. A stale entry is used immediately and refreshed in the background; the refresh updates the cache only, so the running instance keeps its policy and the next page load picks up the new one. Revalidation skips the second request when `latest.json` still names the cached hash.
+- **Server (SSR):** the same TTL and stale-while-revalidate rules apply to an in-module cache keyed by `endpoint|siteId`, and concurrent calls share one in-flight request, so renders do not fetch per request.
+- **Offline / CDN outage:** a cached SiteConfig (fresh or stale) keeps working. With no cache, the instance is built from `fallback` and one `console.warn` is logged. The factory does not reject for network or SiteConfig problems; it only rejects with `ConsentifyConfigError` when `fallback.categories` is missing.
+
+The returned instance exposes the outcome for debugging:
+
+```ts
+consent.cloud.source; // 'network' | 'cache' | 'stale' | 'fallback'
+consent.cloud.config; // the SiteConfig in use ({ categories, policyIdentifier, mode?, consentMaxAgeDays? })
+```
+
+When `source` is `'fallback'`, `config` is your `fallback` in SiteConfig shape (`policyIdentifier` is `fallback.identifier`, or the category hash when it is omitted).
 
 Script-tag sites use the cloud IIFE, which exposes every core export plus `createCloudConsentify` on the `Consentify` global:
 
 ```html
 <script src="https://unpkg.com/@consentify/core@3/dist/consentify-cloud.iife.min.js"></script>
 <script>
-  Consentify.createCloudConsentify({ siteId: 'your-site-id' }).then(function (consent) {
+  Consentify.createCloudConsentify({
+    siteId: 'your-site-id',
+    fallback: { categories: ['analytics'], identifier: 'your-published-policy-identifier' },
+  }).then(function (consent) {
     consent.guard('analytics', function () {
       // Load analytics script
     });
@@ -309,14 +337,20 @@ Script-tag sites use the cloud IIFE, which exposes every core export plus `creat
 
 ### Migrating to v3: cloud mode
 
-`createConsentify` no longer accepts `siteId`. Import the cloud factory from the subpath; the options are unchanged:
+`createConsentify` no longer accepts `siteId`. Import the cloud factory from the subpath and add the now-required `fallback`:
 
 ```diff
 - import { createConsentify } from '@consentify/core';
 - const consent = await createConsentify({ siteId: 'your-site-id', apiKey: 'sk_live_...' });
 + import { createCloudConsentify } from '@consentify/core/cloud';
-+ const consent = await createCloudConsentify({ siteId: 'your-site-id', apiKey: 'sk_live_...' });
++ const consent = await createCloudConsentify({
++   siteId: 'your-site-id',
++   apiKey: 'sk_live_...',
++   fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
++ });
 ```
+
+A CDN failure no longer rejects the factory: code that caught `ConsentifyConfigError` around it to fall back to a local policy can rely on `fallback` instead.
 
 Script-tag users switch from `dist/consentify.iife.min.js` to `dist/consentify-cloud.iife.min.js` and call `Consentify.createCloudConsentify(...)`.
 

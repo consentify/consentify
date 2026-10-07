@@ -125,6 +125,7 @@ describe('vanilla scaffolder', () => {
         expect(out).toContain('/dist/consentify-cloud.iife.min.js');
         expect(out).toContain('Consentify.createCloudConsentify({');
         expect(out).toContain(`siteId: 'site_xyz'`);
+        expect(out).toContain(`fallback: { categories: ["analytics","marketing"], mode: 'opt-in' },`);
         expect(out).not.toContain('Consentify.createConsentify(');
     });
 });

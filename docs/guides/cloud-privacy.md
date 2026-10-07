@@ -24,22 +24,38 @@ import { createCloudConsentify } from '@consentify/core/cloud';
 const consent = await createCloudConsentify({
   siteId: 'your-site-id',
   apiKey: 'optional-api-key', // if required by your setup
+  fallback: { categories: ['analytics', 'marketing'], identifier: 'your-published-policy-identifier' },
 });
 ```
 
 Consentify reports consent changes to the hosted platform for audit trails and analytics. The platform is not live yet - this documents the contract when it launches.
 
+## SiteConfig Requests
+
+To build the instance, the SDK loads the site's configuration (categories, policy identifier, defaults) with plain `GET` requests to `https://cdn.consentify.dev/config/<siteId>/latest.json` and `/config/<siteId>/<hash>.json` (or your `endpoints.config`). The SDK adds no visitor identifier, consent choices or API key to these requests. The result is cached (see below), so most page loads and server renders make no request at all.
+
+## Offline Behavior
+
+If the CDN is unreachable, slow (beyond `timeoutMs`, default 3 seconds), answers with an error, or serves a malformed config:
+
+- A cached SiteConfig, even an expired one, is used as is.
+- With no cache, the instance is built from the required `fallback` policy and one `console.warn` is logged. Consent keeps working: the banner, `guard()` and cookie storage behave as with a self-hosted policy.
+- The factory does not reject, so the site's consent layer does not go down with the CDN.
+
+Set `fallback.identifier` to the site's published policy identifier. Otherwise the fallback has a different policy version than the published one, and returning visitors are asked again while the fallback is active.
+
 ## Local Storage
 
-Cloud mode uses three localStorage keys:
+Cloud mode uses four localStorage keys:
 
 | Key | Purpose | Lifetime | Content |
 |-----|---------|----------|---------|
 | `consentify_visitor` | Stable visitor identifier | Persistent (until the user clears site data) | Random UUID v4 or fallback generated at first use |
 | `consentify_event_buffer` | Retry buffer for failed events | Until next successful send | JSON: `{ url, body, apiKey? }` |
 | `consentify_last_event` | Deduplication key | Persistent | `siteId\|policyHash\|givenAt` to prevent re-reporting identical decisions |
+| `consentify_cfg_<siteId>` | SiteConfig cache | Overwritten on each refresh; fresh for `configTtlSec` (default 1 hour), then served stale while refreshing | JSON: `{ t, h, c }` - fetch time, config hash, and the site's public SiteConfig. No visitor data |
 
-If localStorage is unavailable (private browsing, quota exceeded, etc.), deduplication falls back to in-memory only - no errors. Events retry on next page load if the first attempt failed.
+If localStorage is unavailable (private browsing, quota exceeded, etc.), deduplication falls back to in-memory only and the SiteConfig is fetched on every page load - no errors. Events retry on next page load if the first attempt failed.
 
 ## Event Payload
 
@@ -71,18 +87,22 @@ Each consent change is POSTed to `https://ingest.consentify.dev/v1/events` (or y
 The visitor identifier can be controlled:
 
 ```ts
+const fallback = { categories: ['analytics'], identifier: 'your-published-policy-identifier' };
+
 // Default: auto-generated UUID and persisted to localStorage
-const consent1 = await createCloudConsentify({ siteId: '...' });
+const consent1 = await createCloudConsentify({ siteId: '...', fallback });
 
 // Custom string
 const consent2 = await createCloudConsentify({
   siteId: '...',
+  fallback,
   visitorId: 'user-123',
 });
 
 // Custom factory (sync or async)
 const consent3 = await createCloudConsentify({
   siteId: '...',
+  fallback,
   visitorId: async () => {
     const user = await fetchCurrentUser();
     return user?.id || generateAnonymousId();
@@ -135,6 +155,7 @@ You can redirect events to your own server instead:
 ```ts
 const consent = await createCloudConsentify({
   siteId: 'your-site-id',
+  fallback, // as above
   endpoints: { ingest: 'https://your-server.com/api/consent' }, // POSTs to .../api/consent/v1/events
 });
 ```

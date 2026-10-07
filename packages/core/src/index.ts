@@ -374,7 +374,8 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
 
     const normalize = (choices?: Partial<Choices<T>>): Choices<T> => {
         const base: Record<string, boolean> = {};
-        for (const c of init.policy.categories) base[c] = false;
+        // Unspecified categories follow the mode: opt-out grants, opt-in denies.
+        for (const c of init.policy.categories) base[c] = mode === 'opt-out';
         if (choices) {
             for (const k in choices) {
                 if (allowed.has(k as Necessary | T)) base[k] = !!choices[k as keyof Choices<T>];

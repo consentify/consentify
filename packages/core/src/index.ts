@@ -763,7 +763,7 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
         if (state.decision !== 'decided') return secret ? Promise.resolve(null) : null;
         if (!secret && !unsignedProofWarned) {
             unsignedProofWarned = true;
-            logW('getProof uses FNV1a fallback; pass `secret` for HMAC-SHA256');
+            logW('getProof: FNV1a fallback, pass `secret` for HMAC');
         }
         return secret ? buildProofHmac(state.snapshot, secret) : buildProofFnv1a(state.snapshot);
     }

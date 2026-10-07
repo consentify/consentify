@@ -22,15 +22,15 @@ export function buildSetCookieHeader(name: string, value: string, opt: CookieOpt
  * `acceptAll`, `rejectAll`) into `name`, `value` and an `options` object shaped
  * for framework cookie setters (lowercase `sameSite`, `maxAge` in seconds), so
  * the instance's cookie config is applied instead of being re-typed by hand.
- * `value` is returned verbatim, i.e. still URI-encoded. Written for the
+ * `value` is URI-decoded, ready for setters that encode values themselves
+ * (Next.js, SvelteKit, Express). Written for the
  * SDK's own output (Path, Max-Age, Domain, SameSite, Secure, Partitioned);
  * kept minimal for bundle size, so other attributes pass through under their
  * lowercased name and values containing `=` are not supported.
  *
  * @example Next.js Server Action
  * const { name, value, options } = parseSetCookie(consent.acceptAll(cookieStore.toString()));
- * // Next.js URI-encodes values itself, so decode first to avoid double-encoding.
- * cookieStore.set(name, decodeURIComponent(value), options);
+ * cookieStore.set(name, value, options);
  */
 export function parseSetCookie(header: string): {
     name: string;
@@ -45,7 +45,7 @@ export function parseSetCookie(header: string): {
         else if (k === 'samesite') options.sameSite = v.toLowerCase();
         else options[k] = v ?? true;
     }
-    return { name, value, options };
+    return { name, value: decodeURIComponent(value), options };
 }
 
 export function readCookie(name: string, cookieStr?: string): string | null {

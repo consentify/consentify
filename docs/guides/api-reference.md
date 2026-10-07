@@ -72,7 +72,7 @@ The `server` and `client` namespaces are still available for direct access:
 
 ## `parseSetCookie(header)`
 
-Pure helper that splits a `Set-Cookie` header returned by the server API (`set`, `clear`, `acceptAll`, `rejectAll`) into `{ name, value, options }` for framework cookie setters. `options` carries the instance's cookie config as `{ path?, maxAge?, domain?, sameSite?, secure?, partitioned? }` with lowercase `sameSite` and `maxAge` in seconds; absent attributes are omitted. `value` is returned verbatim (still URI-encoded).
+Pure helper that splits a `Set-Cookie` header returned by the server API (`set`, `clear`, `acceptAll`, `rejectAll`) into `{ name, value, options }` for framework cookie setters. `options` carries the instance's cookie config as `{ path?, maxAge?, domain?, sameSite?, secure?, partitioned? }` with lowercase `sameSite` and `maxAge` in seconds; absent attributes are omitted. `value` is URI-decoded, so it can go straight into setters that encode values themselves (Next.js, SvelteKit, Express).
 
 ```ts
 import { cookies } from 'next/headers';
@@ -80,7 +80,7 @@ import { parseSetCookie } from '@consentify/core';
 
 const cookieStore = await cookies();
 const { name, value, options } = parseSetCookie(consent.acceptAll(cookieStore.toString()));
-cookieStore.set(name, decodeURIComponent(value), options); // Next.js re-encodes values
+cookieStore.set(name, value, options);
 ```
 
 ## `enableConsentMode(instance, options)`

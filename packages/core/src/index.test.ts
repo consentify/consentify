@@ -1228,9 +1228,9 @@ describe('parseSetCookie', () => {
         const header = c.set({ analytics: true }, '');
         const { name, value, options } = parseSetCookie(header);
         expect(name).toBe('cc');
-        expect(value).toBe(header.slice(3, header.indexOf(';')));
+        expect(value).toBe(decodeURIComponent(header.slice(3, header.indexOf(';'))));
         expect(options).toEqual({ path: '/app', maxAge: 3600, domain: '.example.com', sameSite: 'strict', secure: true });
-        expect(c.get(`${name}=${value}`).decision).toBe('decided');
+        expect(c.get(`${name}=${encodeURIComponent(value)}`).decision).toBe('decided');
     });
 
     it('clear() header yields maxAge 0 and an empty value', () => {
@@ -1240,10 +1240,10 @@ describe('parseSetCookie', () => {
         expect(options.maxAge).toBe(0);
     });
 
-    it('returns the value verbatim (still URI-encoded)', () => {
+    it('returns the URI-decoded value', () => {
         const { value } = parseSetCookie(mk().set({ analytics: false }, ''));
-        expect(value).toMatch(/^%7B/);
-        expect(JSON.parse(decodeURIComponent(value)).choices.analytics).toBe(false);
+        expect(value).toMatch(/^\{/);
+        expect(JSON.parse(value).choices.analytics).toBe(false);
     });
 
     it('parses Partitioned and lowercase attribute names, omitting absent keys', () => {

@@ -144,23 +144,21 @@ export async function fetchSiteConfig(
     siteId: string,
     configEndpoint: string,
 ): Promise<SiteConfig> {
-    const base = configEndpoint.replace(/\/$/, '');
+    const base = `${configEndpoint.replace(/\/$/, '')}/config/${siteId}/`;
+    // One fetch helper for both hops; the error text only travels as `cause`.
+    const get = async <J>(file: string): Promise<J> => {
+        const res = await fetch(base + file);
+        if (!res.ok) throw new Error(`${file} ${res.status}`);
+        return res.json() as Promise<J>;
+    };
     try {
-        const latestRes = await fetch(`${base}/config/${siteId}/latest.json`);
-        if (!latestRes.ok) {
-            throw new Error(`latest.json responded with ${latestRes.status}`);
-        }
-        const latest = await latestRes.json() as { current?: string };
+        const latest = await get<{ current?: string }>('latest.json');
         if (!latest || typeof latest.current !== 'string' || !latest.current) {
-            throw new Error('latest.json is missing `current` hash');
+            throw new Error('latest.json: no current');
         }
-        const cfgRes = await fetch(`${base}/config/${siteId}/${latest.current}.json`);
-        if (!cfgRes.ok) {
-            throw new Error(`${latest.current}.json responded with ${cfgRes.status}`);
-        }
-        const cfg = await cfgRes.json() as Partial<SiteConfig>;
+        const cfg = await get<Partial<SiteConfig>>(`${latest.current}.json`);
         if (!cfg || !Array.isArray(cfg.categories) || typeof cfg.policyIdentifier !== 'string') {
-            throw new Error('SiteConfig is malformed');
+            throw new Error('bad SiteConfig');
         }
         return {
             categories: cfg.categories,

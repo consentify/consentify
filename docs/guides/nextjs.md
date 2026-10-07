@@ -156,7 +156,7 @@ export async function setConsent(choices: Record<string, boolean>) {
   // (name, path, domain, Max-Age, SameSite, Secure). `value` is URI-encoded
   // and Next.js encodes values again, so decode it first.
   const { name, value, options } = parseSetCookie(header);
-  cookieStore.set(name, decodeURIComponent(value), options);
+  cookieStore.set(name, value, options);
 }
 ```
 
@@ -335,7 +335,7 @@ export async function acceptAllConsent() {
   const cookieStore = await cookies();
   const header = consent.acceptAll(cookieStore.toString());
   const { name, value, options } = parseSetCookie(header);
-  cookieStore.set(name, decodeURIComponent(value), options); // Next.js re-encodes values
+  cookieStore.set(name, value, options);
 }
 ```
 

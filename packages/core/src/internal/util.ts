@@ -54,6 +54,10 @@ export function hashPolicy(categories: readonly string[], identifier?: string): 
     return fnv1a(stableStringify({ categories: [...categories].sort(), identifier: identifier ?? null}));
 }
 
+/** Valid `ConsentSource` values. */
+export const SOURCES: readonly unknown[] = ['banner', 'preferences', 'api'];
+
+// Accepts v1 records (no `v`) and v2 records (`v: 2`, optional string metadata).
 export function isValidSnapshot<T extends UserCategory>(s: unknown): s is Snapshot<T> {
     if (
         typeof s !== 'object' || s === null ||
@@ -62,6 +66,10 @@ export function isValidSnapshot<T extends UserCategory>(s: unknown): s is Snapsh
         typeof (s as { choices?: unknown }).choices !== 'object' || (s as { choices: unknown }).choices === null
     ) return false;
     if (Number.isNaN(Date.parse((s as { givenAt: string }).givenAt))) return false;
+    const r = s as Record<string, unknown>;
+    if (r.v !== undefined && r.v !== 2) return false;
+    if ((r.pv !== undefined && typeof r.pv !== 'string') || (r.lang !== undefined && typeof r.lang !== 'string')) return false;
+    if (r.src !== undefined && !SOURCES.includes(r.src)) return false;
     const choices = (s as { choices: Record<string, unknown> }).choices;
     for (const k in choices) {
         if (typeof choices[k] !== 'boolean') return false;

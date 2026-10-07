@@ -79,8 +79,8 @@ function CookieBanner() {
   return (
     <div className="cookie-banner">
       <p>We use cookies to enhance your experience.</p>
-      <button onClick={() => consent.acceptAll()}>Accept All</button>
-      <button onClick={() => consent.rejectAll()}>Essential Only</button>
+      <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button onClick={() => consent.rejectAll({ source: 'banner' })}>Essential Only</button>
     </div>
   );
 }
@@ -112,7 +112,7 @@ function useConsent() {
 
 ## Server-Side Usage
 
-The server API works with raw `Cookie` headers — perfect for Next.js, Remix, or any Node.js framework. Pass `{ cookieHeader }` as the last argument to switch a flat method to server mode; a missing or `null` header means no consent yet:
+The server API works with raw `Cookie` headers — perfect for Next.js, Remix, or any Node.js framework. Pass `{ cookieHeader }` as the last argument to switch a flat method to server mode. The key selects server mode, so pass it even without a cookie; an `undefined`, empty or `null` header means no consent yet:
 
 ```ts
 const cookieHeader = request.headers.get('cookie');
@@ -129,7 +129,7 @@ const setCookieHeader = consent.set({ analytics: true }, { cookieHeader });
 response.headers.append('Set-Cookie', setCookieHeader);
 
 // Clear consent (returns a Max-Age=0 Set-Cookie header)
-const clearHeader = consent.clear({});
+const clearHeader = consent.clear({ cookieHeader });
 ```
 
 `consent.server.get(cookieHeader)`, `consent.server.set(choices, cookieHeader?)` and `consent.server.clear()` remain as the low-level equivalents.
@@ -247,9 +247,13 @@ type ConsentState<T> =
   | { decision: 'decided'; snapshot: Snapshot<T> };
 
 interface Snapshot<T> {
+  v?: 2;               // Record format (absent on records written by v2.x)
   policy: string;      // Policy identifier/hash
   givenAt: string;     // ISO timestamp
   choices: Choices<T>; // { necessary: true, ...categories }
+  pv?: string;         // policy.textVersion
+  lang?: string;       // UI language (option, per-call, or <html lang>)
+  src?: 'banner' | 'preferences' | 'api'; // per-call `source`
 }
 
 type Choices<T> = Record<'necessary' | T, boolean>;
@@ -297,7 +301,7 @@ const consent = createConsentify({
 });
 
 const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie') });
-// { policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null
+// { v: 2, policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null
 
 await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true
 ```
@@ -336,9 +340,9 @@ For non-bundled apps (WordPress, static sites), load the IIFE build directly:
 </script>
 ```
 
-The IIFE bundle is ~4.3kb gzipped and exposes all exports on the `Consentify` global.
+The IIFE bundle is ~4.4kb gzipped and exposes all exports on the `Consentify` global.
 
-For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~5.6kb gzipped). It exposes the same exports plus `createCloudConsentify`:
+For cloud mode, load `dist/consentify-cloud.iife.min.js` instead (~5.9kb gzipped). It exposes the same exports plus `createCloudConsentify`:
 
 ```html
 <script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>

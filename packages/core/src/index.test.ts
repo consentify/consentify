@@ -678,22 +678,25 @@ describe('unified top-level API', () => {
         expect(state.decision).toBe('decided');
     });
 
-    it('get({}) with a missing, empty or null header is server-side unset', () => {
+    it('get({ cookieHeader }) with an undefined, empty or null header is server-side unset', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         c.client.set({ analytics: true });
         expect(c.get().decision).toBe('decided');
         // Server mode never reads the browser store.
-        expect(c.get({})).toEqual({ decision: 'unset' });
+        expect(c.get({ cookieHeader: undefined })).toEqual({ decision: 'unset' });
         expect(c.get({ cookieHeader: '' })).toEqual({ decision: 'unset' });
         expect(c.get({ cookieHeader: null })).toEqual({ decision: 'unset' });
     });
 
-    it('a non-object argument is not server mode', () => {
+    it('an argument without a cookieHeader key is not server mode', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         c.client.set({ analytics: true });
         // v2 call shapes from untyped code fall through to the client store.
         expect((c.get as (x: unknown) => unknown)('consentify=x')).toBe(c.client.get());
         expect((c.get as (x: unknown) => unknown)(null)).toBe(c.client.get());
+        expect((c.get as (x: unknown) => unknown)({})).toBe(c.client.get());
+        expect((c.clear as (x: unknown) => unknown)({})).toBeUndefined();
+        expect(c.get()).toEqual({ decision: 'unset' });
     });
 
     it('isGranted("analytics") returns correct boolean', () => {
@@ -714,9 +717,9 @@ describe('unified top-level API', () => {
         expect(c.isGranted('analytics')).toBe(true);
     });
 
-    it('set(choices, {}) returns Set-Cookie string', () => {
+    it('set(choices, { cookieHeader: undefined }) returns Set-Cookie string', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const result = c.set({ analytics: true }, {});
+        const result = c.set({ analytics: true }, { cookieHeader: undefined });
         expect(typeof result).toBe('string');
         expect(result).toContain('consentify=');
         // Server mode does not touch the browser store.
@@ -742,10 +745,10 @@ describe('unified top-level API', () => {
         expect(c.get()).toEqual({ decision: 'unset' });
     });
 
-    it('clear({}) returns a Max-Age=0 header and leaves the client store alone', () => {
+    it('clear({ cookieHeader }) returns a Max-Age=0 header and leaves the client store alone', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         c.client.set({ analytics: true });
-        const result = c.clear({});
+        const result = c.clear({ cookieHeader: undefined });
         expect(typeof result).toBe('string');
         expect(result).toContain('consentify=;');
         expect(result).toContain('Max-Age=0');
@@ -754,18 +757,18 @@ describe('unified top-level API', () => {
 
     it('isGranted(category, { cookieHeader }) reads the header (opt-in)', () => {
         const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
-        const cookieHeader = c.set({ analytics: true }, {}).split(';')[0];
+        const cookieHeader = c.set({ analytics: true }, { cookieHeader: null }).split(';')[0];
         expect(c.isGranted('analytics', { cookieHeader })).toBe(true);
         expect(c.isGranted('marketing', { cookieHeader })).toBe(false);
-        expect(c.isGranted('analytics', {})).toBe(false);
-        expect(c.isGranted('necessary', {})).toBe(true);
+        expect(c.isGranted('analytics', { cookieHeader: undefined })).toBe(false);
+        expect(c.isGranted('necessary', { cookieHeader: undefined })).toBe(true);
     });
 
     it('isGranted(category, { cookieHeader }) follows opt-out when unset', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
         expect(c.isGranted('analytics', { cookieHeader: null })).toBe(true);
         expect(c.isGranted('analytics', { cookieHeader: 'other=1' })).toBe(true);
-        const cookieHeader = c.set({ analytics: false }, {}).split(';')[0];
+        const cookieHeader = c.set({ analytics: false }, { cookieHeader: null }).split(';')[0];
         expect(c.isGranted('analytics', { cookieHeader })).toBe(false);
     });
 
@@ -1267,7 +1270,7 @@ describe('parseSetCookie', () => {
 
     it('round-trips set() output with custom cookie config', () => {
         const c = mk();
-        const header = c.set({ analytics: true }, {});
+        const header = c.set({ analytics: true }, { cookieHeader: null });
         const { name, value, options } = parseSetCookie(header);
         expect(name).toBe('cc');
         expect(value).toBe(decodeURIComponent(header.slice(3, header.indexOf(';'))));
@@ -1276,14 +1279,14 @@ describe('parseSetCookie', () => {
     });
 
     it('clear() header yields maxAge 0 and an empty value', () => {
-        const { name, value, options } = parseSetCookie(mk().clear({}));
+        const { name, value, options } = parseSetCookie(mk().clear({ cookieHeader: null }));
         expect(name).toBe('cc');
         expect(value).toBe('');
         expect(options.maxAge).toBe(0);
     });
 
     it('returns the URI-decoded value', () => {
-        const { value } = parseSetCookie(mk().set({ analytics: false }, {}));
+        const { value } = parseSetCookie(mk().set({ analytics: false }, { cookieHeader: null }));
         expect(value).toMatch(/^\{/);
         expect(JSON.parse(value).choices.analytics).toBe(false);
     });
@@ -1672,9 +1675,9 @@ describe('acceptAll / rejectAll', () => {
         expect(header).toContain('consentify=');
     });
 
-    it('rejectAll({}) returns Set-Cookie string', () => {
+    it('rejectAll({ cookieHeader: null }) returns Set-Cookie string', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const header = c.rejectAll({});
+        const header = c.rejectAll({ cookieHeader: null });
         expect(typeof header).toBe('string');
         expect(header).toContain('consentify=');
     });
@@ -1791,7 +1794,7 @@ describe('consent mode (opt-in / opt-out)', () => {
 
     it('opt-out mode: partial server set from empty header keeps untouched categories granted', () => {
         const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const }, mode: 'opt-out' });
-        for (const header of [c.set({ analytics: false }, {}), c.server.set({ analytics: false })]) {
+        for (const header of [c.set({ analytics: false }, { cookieHeader: null }), c.server.set({ analytics: false })]) {
             const s = c.server.get(setHeaderToCookieHeader(header));
             if (s.decision !== 'decided') throw new Error('expected decided');
             expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: true });
@@ -1803,7 +1806,7 @@ describe('consent mode (opt-in / opt-out)', () => {
         c.set({ analytics: true });
         expect(c.isGranted('analytics')).toBe(true);
         expect(c.isGranted('marketing')).toBe(false);
-        const s = c.server.get(setHeaderToCookieHeader(c.set({ analytics: true }, {})));
+        const s = c.server.get(setHeaderToCookieHeader(c.set({ analytics: true }, { cookieHeader: null })));
         if (s.decision !== 'decided') throw new Error('expected decided');
         expect(s.snapshot.choices).toEqual({ necessary: true, analytics: true, marketing: false });
     });
@@ -1814,7 +1817,7 @@ describe('consent mode (opt-in / opt-out)', () => {
         expect(c.isGranted('analytics')).toBe(false);
         expect(c.isGranted('marketing')).toBe(false);
         expect(c.isGranted('necessary')).toBe(true);
-        const s = c.server.get(setHeaderToCookieHeader(c.rejectAll({})));
+        const s = c.server.get(setHeaderToCookieHeader(c.rejectAll({ cookieHeader: null })));
         if (s.decision !== 'decided') throw new Error('expected decided');
         expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: false });
     });
@@ -2249,7 +2252,7 @@ describe('HMAC-SHA256 proof', () => {
                 secret: 'dev-secret',
             });
             expect(await c.getProof()).toBeNull();
-            expect(await c.getProof({})).toBeNull();
+            expect(await c.getProof({ cookieHeader: undefined })).toBeNull();
             expect(await c.getProof({ cookieHeader: 'other=1' })).toBeNull();
         });
     });
@@ -2294,6 +2297,245 @@ describe('HMAC-SHA256 proof', () => {
             const proof = await c.getProof({ cookieHeader });
             const tampered: ConsentProof<'analytics'> = { ...proof!, choices: { ...proof!.choices, analytics: false } };
             expect(await verifyProof(tampered, 'dev-secret')).toBe(false);
+        });
+    });
+});
+
+describe('consent record v2', () => {
+    const cats = ['analytics', 'marketing'] as const;
+    const v2Keys = ['choices', 'givenAt', 'policy', 'v'];
+    // Decoded record from a Set-Cookie header, or from document.cookie. An empty
+    // value is a just-cleared cookie (happy-dom keeps `Max-Age=0` for up to 1 ms).
+    const fromHeader = (h: string) => JSON.parse(decodeURIComponent(h.split(';')[0].slice('consentify='.length)));
+    const fromDocument = () => {
+        const m = /(?:^|; )consentify=([^;]+)/.exec(document.cookie);
+        return m ? JSON.parse(decodeURIComponent(m[1])) : null;
+    };
+    const v1Record = (policy: string) => ({
+        policy,
+        givenAt: new Date().toISOString(),
+        choices: { necessary: true, analytics: true, marketing: false },
+    });
+
+    beforeEach(() => { clearAllCookies(); document.documentElement.lang = ''; });
+    afterEach(() => { clearAllCookies(); document.documentElement.lang = ''; vi.restoreAllMocks(); });
+
+    it('new records have v: 2 and omit unset metadata', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        c.set({ analytics: true });
+        expect(fromDocument()).toEqual({
+            v: 2,
+            policy: c.policy.identifier,
+            givenAt: expect.any(String),
+            choices: { necessary: true, analytics: true, marketing: false },
+        });
+        expect(Object.keys(fromDocument()).sort()).toEqual(v2Keys);
+        const s = c.get();
+        expect(s.decision === 'decided' && Object.keys(s.snapshot).sort()).toEqual(v2Keys);
+        expect(Object.keys(fromHeader(c.set({}, { cookieHeader: null }))).sort()).toEqual(v2Keys);
+    });
+
+    it('records policy.textVersion as pv without changing the policy identifier', () => {
+        const c = createConsentify({ policy: { categories: cats, textVersion: '2026-10-01' } });
+        expect(c.policy.identifier).toBe(createConsentify({ policy: { categories: cats } }).policy.identifier);
+        c.acceptAll();
+        expect(fromDocument().pv).toBe('2026-10-01');
+        expect(fromHeader(c.acceptAll({ cookieHeader: null })).pv).toBe('2026-10-01');
+        // A new text version does not invalidate the existing record.
+        const bumped = createConsentify({ policy: { categories: cats, textVersion: '2026-11-01' } });
+        const s = bumped.get();
+        expect(s.decision === 'decided' && s.snapshot.pv).toBe('2026-10-01');
+    });
+
+    it('lang comes from the init option', () => {
+        document.documentElement.lang = 'de';
+        const c = createConsentify({ policy: { categories: cats }, lang: 'en-GB' });
+        c.rejectAll();
+        expect(fromDocument().lang).toBe('en-GB');
+    });
+
+    it('lang defaults to <html lang>, read at write time', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        c.set({ analytics: true });
+        expect('lang' in fromDocument()).toBe(false);
+        document.documentElement.lang = 'de';
+        c.set({ analytics: true });
+        expect(fromDocument().lang).toBe('de');
+    });
+
+    it('a per-call lang overrides the init option and <html lang>', () => {
+        document.documentElement.lang = 'de';
+        const c = createConsentify({ policy: { categories: cats }, lang: 'en-GB' });
+        c.set({ analytics: true }, { lang: 'fr' });
+        expect(fromDocument().lang).toBe('fr');
+        c.acceptAll({ lang: 'sk' });
+        expect(fromDocument().lang).toBe('sk');
+        expect(fromHeader(c.rejectAll({ cookieHeader: null, lang: 'cs' })).lang).toBe('cs');
+    });
+
+    it('server writes take lang from init or the call, never from <html lang>', () => {
+        document.documentElement.lang = 'de';
+        const c = createConsentify({ policy: { categories: cats } });
+        expect('lang' in fromHeader(c.set({ analytics: true }, { cookieHeader: null }))).toBe(false);
+        const withInit = createConsentify({ policy: { categories: cats }, lang: 'pl' });
+        expect(fromHeader(withInit.rejectAll({ cookieHeader: null })).lang).toBe('pl');
+    });
+
+    it('records src per call on set, acceptAll and rejectAll (client)', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        c.acceptAll({ source: 'banner' });
+        expect(fromDocument().src).toBe('banner');
+        c.set({ marketing: false }, { source: 'preferences' });
+        expect(fromDocument().src).toBe('preferences');
+        c.rejectAll({ source: 'api' });
+        expect(fromDocument().src).toBe('api');
+        // Metadata belongs to one decision; it is not carried over.
+        c.set({ analytics: true });
+        expect('src' in fromDocument()).toBe(false);
+    });
+
+    it('records src per call on set, acceptAll and rejectAll (server)', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        const first = c.acceptAll({ cookieHeader: null, source: 'banner' });
+        expect(fromHeader(first).src).toBe('banner');
+        const cookieHeader = setHeaderToCookieHeader(first);
+        expect(fromHeader(c.set({ marketing: false }, { cookieHeader, source: 'preferences' }))).toMatchObject({
+            src: 'preferences',
+            choices: { analytics: true, marketing: false },
+        });
+        expect(fromHeader(c.rejectAll({ cookieHeader, source: 'api' })).src).toBe('api');
+        // Merging keeps the previous choices but not the previous metadata.
+        expect('src' in fromHeader(c.set({}, { cookieHeader }))).toBe(false);
+        expect(fromHeader(c.server.set({ analytics: true }, null, { source: 'api' })).src).toBe('api');
+    });
+
+    it('set(choices, { source }) stays client-side and returns undefined', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        const listener = vi.fn();
+        c.subscribe(listener);
+        expect(c.set({ analytics: true }, { source: 'banner', lang: 'en' })).toBeUndefined();
+        expect(c.acceptAll({ source: 'banner' })).toBeUndefined();
+        expect(listener).toHaveBeenCalledTimes(2);
+        const s = c.get();
+        expect(s.decision === 'decided' && s.snapshot).toMatchObject({ v: 2, src: 'banner' });
+        expect(fromDocument()).toMatchObject({ v: 2, src: 'banner' });
+    });
+
+    it('set(choices, { cookieHeader: undefined }) is server mode', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        const header = c.set({ analytics: true }, { cookieHeader: undefined, source: 'api' });
+        expect(typeof header).toBe('string');
+        expect(fromHeader(header)).toMatchObject({ v: 2, src: 'api' });
+        expect(c.get()).toEqual({ decision: 'unset' });
+        expect(fromDocument()).toBeNull();
+    });
+
+    it('a v1 cookie still reads as decided and the next write produces v2', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        const v1 = v1Record(c.policy.identifier);
+        expect(c.get({ cookieHeader: `consentify=${enc(v1)}` })).toEqual({ decision: 'decided', snapshot: v1 });
+        setCookie('consentify', enc(v1));
+        const fresh = createConsentify({ policy: { categories: cats } });
+        expect(fresh.get()).toEqual({ decision: 'decided', snapshot: v1 });
+        fresh.set({ marketing: true }, { source: 'preferences' });
+        expect(fromDocument()).toMatchObject({ v: 2, src: 'preferences', choices: { analytics: true, marketing: true } });
+    });
+
+    it('rejects records with an invalid src, non-string pv or lang, or an unknown v', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        const base = { v: 2, ...v1Record(c.policy.identifier) };
+        const read = (o: object) => c.get({ cookieHeader: `consentify=${enc(o)}` }).decision;
+        expect(read({ ...base, pv: '1', lang: 'en', src: 'banner' })).toBe('decided');
+        expect(read({ ...base, src: 'popup' })).toBe('unset');
+        expect(read({ ...base, src: null })).toBe('unset');
+        expect(read({ ...base, pv: 3 })).toBe('unset');
+        expect(read({ ...base, pv: null })).toBe('unset');
+        expect(read({ ...base, lang: ['en'] })).toBe('unset');
+        expect(read({ ...base, v: 3 })).toBe('unset');
+        expect(read({ ...base, v: '2' })).toBe('unset');
+    });
+
+    it('untyped callers cannot write a record that the next read rejects', () => {
+        const c = createConsentify({ policy: { categories: cats, textVersion: 7 as unknown as string } });
+        c.set({ analytics: true }, { source: 'popup' as never, lang: 5 as unknown as string });
+        const stored = fromDocument();
+        expect(stored).toMatchObject({ v: 2, pv: '7', lang: '5' });
+        expect('src' in stored).toBe(false);
+        expect(createConsentify({ policy: { categories: cats } }).get().decision).toBe('decided');
+    });
+
+    it("the 'change' event and adapter.save carry the full v2 record", async () => {
+        const saved: { snapshot: Snapshot<string> }[] = [];
+        const c = createConsentify({
+            policy: { categories: cats, textVersion: 't1' },
+            lang: 'en',
+            visitorId: 'visitor-1',
+            adapter: { async save(d) { saved.push(d); }, async load() { return null; } },
+        });
+        const onChange = vi.fn();
+        c.on('change', onChange);
+        c.acceptAll({ source: 'banner' });
+        const expected = { v: 2, pv: 't1', lang: 'en', src: 'banner' };
+        expect(onChange.mock.calls[0][0].to.snapshot).toMatchObject(expected);
+        await vi.waitFor(() => expect(saved.length).toBe(1));
+        expect(saved[0].snapshot).toMatchObject(expected);
+    });
+
+    it('hydrates v1 and v2 records from adapter.load as stored', async () => {
+        for (const extra of [{}, { v: 2 as const, pv: 't1', lang: 'de', src: 'preferences' as const }]) {
+            clearAllCookies();
+            const remote: Snapshot<'analytics' | 'marketing'> = { ...v1Record(hashPolicy(cats)), ...extra };
+            const c = createConsentify({
+                policy: { categories: cats },
+                visitorId: 'visitor-1',
+                adapter: { async save() {}, async load() { return remote; } },
+            });
+            await vi.waitFor(() => expect(c.get().decision).toBe('decided'));
+            expect(c.get()).toEqual({ decision: 'decided', snapshot: remote });
+            c.destroy();
+        }
+    });
+
+    it('the HMAC proof covers v, pv, lang and src', async () => {
+        await withSimulatedServer(async () => {
+            const c = createConsentify({
+                policy: { categories: cats, textVersion: 't1' },
+                lang: 'en',
+                secret: 'dev-secret',
+            });
+            const cookieHeader = setHeaderToCookieHeader(c.acceptAll({ cookieHeader: null, source: 'banner' }));
+            const proof = (await c.getProof({ cookieHeader }))!;
+            expect(proof).toMatchObject({ v: 2, pv: 't1', lang: 'en', src: 'banner' });
+            expect(await verifyProof(proof, 'dev-secret')).toBe(true);
+            for (const tampered of [
+                { ...proof, src: 'preferences' as const },
+                { ...proof, src: undefined },
+                { ...proof, lang: 'de' },
+                { ...proof, pv: 't2' },
+                { ...proof, v: undefined },
+            ]) {
+                expect(await verifyProof(tampered, 'dev-secret')).toBe(false);
+            }
+        });
+    });
+
+    it('v1 proofs still verify', async () => {
+        // 2.x signed HMAC-SHA256 over stableStringify({ policy, givenAt, choices }).
+        const v1 = v1Record('p1');
+        const te = new TextEncoder();
+        const key = await crypto.subtle.importKey('raw', te.encode('dev-secret'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+        const sig = await crypto.subtle.sign('HMAC', key, te.encode(stableStringify(v1)));
+        const signature = Array.from(new Uint8Array(sig), b => b.toString(16).padStart(2, '0')).join('');
+        expect(await verifyProof({ ...v1, signature }, 'dev-secret')).toBe(true);
+        expect(await verifyProof({ ...v1, signature, v: 2 }, 'dev-secret')).toBe(false);
+
+        // A v1 record read by v3 yields a v1-shaped proof.
+        await withSimulatedServer(async () => {
+            const c = createConsentify({ policy: { categories: cats }, secret: 'dev-secret' });
+            const stored = v1Record(c.policy.identifier);
+            const proof = await c.getProof({ cookieHeader: `consentify=${enc(stored)}` });
+            expect(proof).toEqual({ ...stored, signature: expect.any(String) });
+            expect(await verifyProof(proof!, 'dev-secret')).toBe(true);
         });
     });
 });

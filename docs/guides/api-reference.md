@@ -23,7 +23,7 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `mode` | `'opt-in' \| 'opt-out'` | `'opt-in'` | GDPR opt-in (deny by default) or CCPA opt-out (grant by default) |
 | `expirationWarningDays` | `number` | `30` | Days before expiry to emit `'expiring'` event |
 | `storage` | `StorageKind[]` | `['cookie']` | Client storage priority (`'cookie'`, `'localStorage'`) |
-| `secret` | `string` | — | Server-only. Adds an async, HMAC-SHA256 signed `getProof()` and passes a signed `proof` to `adapter.save()`. Throws `ConsentifyConfigError` in a browser |
+| `secret` | `string` | — | Server-only. Adds an async, HMAC-SHA256 signed `getProof()`. Throws `ConsentifyConfigError` in a browser |
 | `visitorId` | `string \| () => string \| Promise<string>` | auto | Visitor ID for the adapter and cloud events. When set, it is used for every decision, `reject_all` included. Default: a random id in localStorage (`consentify_visitor`), created only after an `accept_all` / `customize` decision (by `adapter.save()` or the cloud reporter); a `reject_all` deletes it, and `adapter.save()` and the cloud event get a one-off 8-hex token instead. See [visitor ID](./cloud-privacy.md#visitor-id) |
 | `adapter` | `ConsentAdapter<T>` | — | Custom persistence backend |
 
@@ -492,7 +492,7 @@ Server mode is now selected by an options object instead of a bare string, the u
 | `consent.getProof()` without `secret` (FNV1a, forgeable) | Removed. Create a server instance with `secret` and call `await consent.getProof({ cookieHeader })` |
 | `consent.getProof(cookieHeader)` with `secret` | `await consent.getProof({ cookieHeader })` |
 | `consent.client.get('analytics')` | `consent.isGranted('analytics')` |
-| `adapter.save({ visitorId, snapshot, proof })`, `proof` always set | `proof` is optional: present only when the instance has a `secret` |
+| `adapter.save({ visitorId, snapshot, proof })`, `proof` always set | `adapter.save({ visitorId, snapshot })`: saves run in the browser, where `secret` is not allowed; sign on the server with `getProof({ cookieHeader })` or `reportConsent` |
 
 The `cookieHeader` key must be present, since it is what selects server mode; its value may be a string, `null` or `undefined`, so `request.headers.get('cookie')` can be passed as is. The `consent.server.*` namespace keeps its v2 signatures (`server.set` gains an optional third `WriteOptions` argument).
 

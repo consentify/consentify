@@ -568,10 +568,10 @@ export function createConsentify<Cs extends readonly string[]>(
             try {
                 const refusal = !init.visitorId && init.policy.categories.every(c => !snapshot.choices[c as T]);
                 if (refusal) dropStoredVisitorId();
-                const data: { visitorId: string; snapshot: Snapshot<T>; proof?: ConsentProof<T> } =
-                    { visitorId: refusal ? ephemeralVisitorId() : await getVisitorId(true), snapshot };
-                if (secret) data.proof = await buildProofHmac(snapshot, secret);
-                await adapter.save(data);
+                // Saves only run in a browser (client writes), where `secret` is
+                // forbidden, so no proof is attached. Sign on the server with
+                // `getProof({ cookieHeader })` or `reportConsent` instead.
+                await adapter.save({ visitorId: refusal ? ephemeralVisitorId() : await getVisitorId(true), snapshot });
             } catch (err) {
                 logW('adapter.save failed:', err);
             }

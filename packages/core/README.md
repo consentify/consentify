@@ -309,7 +309,7 @@ const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie
 await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true
 ```
 
-With a `secret`, `adapter.save()` also receives the signed `proof`; without one it gets only `{ visitorId, snapshot }`.
+`adapter.save()` runs in the browser and receives `{ visitorId, snapshot }` only. Signed proofs come from a server instance with a `secret`, via `getProof({ cookieHeader })` or `reportConsent`.
 
 ### Expiration Warning
 

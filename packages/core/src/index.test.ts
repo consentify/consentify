@@ -2052,7 +2052,7 @@ describe('ConsentAdapter integration', () => {
         return adapter;
     };
 
-    it('calls adapter.save after client.set with a snapshot and no proof (no secret)', async () => {
+    it('calls adapter.save after client.set with { visitorId, snapshot } only', async () => {
         const adapter = makeAdapter();
         const c = createConsentify({
             policy: { categories: ['analytics'] as const },

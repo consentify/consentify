@@ -136,8 +136,8 @@ export function CookieBanner() {
   return (
     <div role="dialog" aria-label="Cookie consent">
       <p>We use cookies to improve your experience.</p>
-      <button onClick={() => consent.acceptAll()}>Accept All</button>
-      <button onClick={() => consent.rejectAll()}>Reject All</button>
+      <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
     </div>
   );
 }
@@ -187,7 +187,7 @@ export async function POST(request: Request) {
 }
 ```
 
-Passing an options object (`{ cookieHeader }`) switches `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` to server mode; a missing or `null` header means no consent yet. `getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
+Passing an options object with a `cookieHeader` key (`{ cookieHeader }`) switches `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` to server mode; an `undefined`, empty or `null` header means no consent yet. Objects without that key, like `{ source: 'banner' }`, stay client-side. `getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
 
 ## Google Consent Mode v2
 

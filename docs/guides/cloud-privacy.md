@@ -57,6 +57,10 @@ Cloud mode uses four localStorage keys:
 
 If localStorage is unavailable (private browsing, quota exceeded, etc.), deduplication falls back to in-memory only and the SiteConfig is fetched on every page load - no errors. Events retry on next page load if the first attempt failed.
 
+## Consent Record
+
+The consent record kept in the `consentify` cookie (and passed to a custom `adapter`) stores the policy version, timestamp and choices, plus the policy text version (`pv`), the language of the consent UI (`lang`) and which UI recorded the decision (`src`: `banner`, `preferences` or `api`). These fields describe what the visitor was shown, not who the visitor is. The event payload below does not include them yet.
+
 ## Event Payload
 
 Each consent change is POSTed to `https://ingest.consentify.dev/v1/events` (or your custom endpoint):

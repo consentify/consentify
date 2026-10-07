@@ -20,6 +20,7 @@ import type {
     Snapshot,
     StorageKind,
     VisitorIdSource,
+    WriteOptions,
 } from './internal/types';
 import { ConsentifyConfigError } from './internal/types';
 import {
@@ -33,6 +34,7 @@ import { buildProofHmac } from './internal/crypto';
 import { resolveVisitorId } from './internal/visitor';
 import {
     MS_PER_DAY,
+    SOURCES,
     TAG,
     canLocalStorage,
     dec,
@@ -54,6 +56,7 @@ export type {
     ConsentEventMap,
     ConsentMode,
     ConsentProof,
+    ConsentSource,
     ConsentState,
     Necessary,
     ServerOptions,
@@ -61,6 +64,7 @@ export type {
     StorageKind,
     UserCategory,
     VisitorIdSource,
+    WriteOptions,
 } from './internal/types';
 export type { Policy, ConsentifySubscribable } from './internal/types';
 export { ConsentifyConfigError } from './internal/types';
@@ -80,7 +84,22 @@ export { enableDebug, type EnableDebugOptions } from './internal/debug';
 // --- Factory init types -----------------------------------------------------
 
 export interface CreateConsentifyInit<Cs extends readonly string[]> {
-    policy: { categories: Cs, identifier?: string };
+    policy: {
+        categories: Cs;
+        identifier?: string;
+        /**
+         * Version of the policy text shown to the user, recorded as `pv` on
+         * every new consent record. Does not invalidate existing consent;
+         * change `identifier` for material changes.
+         */
+        textVersion?: string;
+    };
+    /**
+     * Language of the consent UI, recorded as `lang` on every new consent
+     * record. In the browser it defaults to `<html lang>` (read at write
+     * time); a per-call `lang` overrides both.
+     */
+    lang?: string;
     cookie?: {
         name?: string; sameSite?: 'Lax'|'Strict'|'None';
         secure?: boolean; path?: string; domain?: string;
@@ -139,20 +158,25 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
 
 /**
  * Instance returned by `createConsentify` (no `secret`). The flat methods run
- * against the browser store; pass a {@link ServerOptions} object as the last
- * argument to run them against a request `Cookie` header instead.
+ * against the browser store; pass an object with a `cookieHeader` key
+ * ({@link ServerOptions}) as the last argument to run them against a request
+ * `Cookie` header instead. Writes also take {@link WriteOptions} metadata.
  */
 export interface ConsentifyInstance<Cs extends readonly string[]> {
     readonly policy: { readonly categories: Cs; readonly identifier: string };
     readonly mode: ConsentMode;
     readonly server: {
         get: (cookieHeader: string | null | undefined) => ConsentState<ArrToUnion<Cs>>;
-        set: (choices: Partial<Choices<ArrToUnion<Cs>>>, currentCookieHeader?: string) => string;
+        set: (
+            choices: Partial<Choices<ArrToUnion<Cs>>>,
+            currentCookieHeader?: string | null,
+            opts?: WriteOptions,
+        ) => string;
         clear: () => string;
     };
     readonly client: {
         get: () => ConsentState<ArrToUnion<Cs>>;
-        set: (choices: Partial<Choices<ArrToUnion<Cs>>>) => void;
+        set: (choices: Partial<Choices<ArrToUnion<Cs>>>, opts?: WriteOptions) => void;
         clear: () => void;
         subscribe: (callback: () => void) => () => void;
         getServerSnapshot: () => ConsentState<ArrToUnion<Cs>>;
@@ -166,23 +190,24 @@ export interface ConsentifyInstance<Cs extends readonly string[]> {
     readonly get: (opts?: ServerOptions) => ConsentState<ArrToUnion<Cs>>;
     /** Whether `category` is granted. Unset consent follows `mode` (opt-out grants). */
     readonly isGranted: (category: Necessary | ArrToUnion<Cs>, opts?: ServerOptions) => boolean;
+    // Server overloads come first so any object with `cookieHeader` resolves to `string`.
     readonly set: {
-        (choices: Partial<Choices<ArrToUnion<Cs>>>): void;
         /** Server: merges into the consent in `opts.cookieHeader`, returns a `Set-Cookie` header. */
-        (choices: Partial<Choices<ArrToUnion<Cs>>>, opts: ServerOptions): string;
+        (choices: Partial<Choices<ArrToUnion<Cs>>>, opts: ServerOptions & WriteOptions): string;
+        (choices: Partial<Choices<ArrToUnion<Cs>>>, opts?: WriteOptions): void;
     };
     readonly clear: {
-        (): void;
         /** Server: returns a clearing (`Max-Age=0`) `Set-Cookie` header. */
         (opts: ServerOptions): string;
+        (): void;
     };
     readonly acceptAll: {
-        (): void;
-        (opts: ServerOptions): string;
+        (opts: ServerOptions & WriteOptions): string;
+        (opts?: WriteOptions): void;
     };
     readonly rejectAll: {
-        (): void;
-        (opts: ServerOptions): string;
+        (opts: ServerOptions & WriteOptions): string;
+        (opts?: WriteOptions): void;
     };
     readonly subscribe: (callback: () => void) => () => void;
     readonly getServerSnapshot: () => ConsentState<ArrToUnion<Cs>>;
@@ -293,6 +318,19 @@ export function createConsentify<Cs extends readonly string[]>(
     };
 
     const secret = init.secret ?? '';
+    const textVersion = init.policy.textVersion;
+
+    // New consent record (format v2). Unset optional keys are omitted. `pv` and
+    // `lang` are coerced and an unknown `source` is dropped, so untyped callers
+    // cannot write a record that the next read rejects.
+    const record = (choices: Choices<T>, o?: WriteOptions, docLang?: string): Snapshot<T> => {
+        const s: Snapshot<T> = { v: 2, policy: policyHash, givenAt: toISO(), choices };
+        const lang = o?.lang || init.lang || docLang;
+        if (textVersion) s.pv = '' + textVersion;
+        if (lang) s.lang = '' + lang;
+        if (SOURCES.includes(o?.source)) s.src = o!.source;
+        return s;
+    };
 
     // --- client-side storage helpers ---
     // Unified localStorage dispatcher: op is 'r'ead / 'w'rite / 'c'lear.
@@ -353,16 +391,13 @@ export function createConsentify<Cs extends readonly string[]>(
         },
         set: (
             choices: Partial<Choices<T>>,
-            currentCookieHeader?: string | null
+            currentCookieHeader?: string | null,
+            opts?: WriteOptions,
         ): string => {
             const prev = server.get(currentCookieHeader);
             const base = prev.decision === 'decided' ? prev.snapshot.choices : normalize();
-            const snapshot: Snapshot<T> = {
-                policy: policyHash,
-                givenAt: toISO(),
-                choices: normalize({ ...base, ...choices }),
-            };
-            const encoded = enc(snapshot);
+            // Metadata is per decision: only `opts` and init, never the previous record.
+            const encoded = enc(record(normalize({ ...base, ...choices }), opts));
             warnIfOversized(encoded);
             return buildSetCookieHeader(cookieName, encoded, cookieCfg);
         },
@@ -534,8 +569,9 @@ export function createConsentify<Cs extends readonly string[]>(
         })();
     }
 
-    // ---- flat API mode switch: any options object means server mode
-    const isServer = (opts: unknown): opts is ServerOptions => typeof opts === 'object' && opts !== null;
+    // ---- flat API mode switch: an object with a `cookieHeader` key (any value)
+    // means server mode. `Object()` keeps `in` safe for primitives from untyped callers.
+    const isServer = (opts: unknown): opts is ServerOptions => 'cookieHeader' in Object(opts);
     const stateFor = (opts?: ServerOptions): ConsentState<T> =>
         isServer(opts) ? server.get(opts.cookieHeader) : cachedState;
     const isGranted = (category: Necessary | T, opts?: ServerOptions): boolean => {
@@ -550,15 +586,15 @@ export function createConsentify<Cs extends readonly string[]>(
 
         // An explicit set() is always a new decision: even identical choices
         // are re-written with a fresh `givenAt` (matches `server.set`).
-        set: (choices: Partial<Choices<T>>) => {
+        set: (choices: Partial<Choices<T>>, opts?: WriteOptions) => {
             const from = cachedState;
             const fresh = readClient();
             const base = fresh ? fresh.choices : normalize();
-            const next: Snapshot<T> = {
-                policy: policyHash,
-                givenAt: toISO(),
-                choices: normalize({ ...base, ...choices }),
-            };
+            const next = record(
+                normalize({ ...base, ...choices }),
+                opts,
+                isBrowser() ? document.documentElement?.lang : '',
+            );
             writeClientRaw(enc(next));
             setCachedSnapshot(next);
             notifyListeners();
@@ -612,8 +648,8 @@ export function createConsentify<Cs extends readonly string[]>(
     };
 
     // --- Flat top-level API (the overloads live on ConsentifyInstance) ---
-    const flatSet = (choices: Partial<Choices<T>>, opts?: ServerOptions): string | void =>
-        isServer(opts) ? server.set(choices, opts.cookieHeader) : client.set(choices);
+    const flatSet = (choices: Partial<Choices<T>>, opts?: WriteOptions): string | void =>
+        isServer(opts) ? server.set(choices, opts.cookieHeader, opts) : client.set(choices, opts);
 
     const instance = {
         policy: {
@@ -628,8 +664,8 @@ export function createConsentify<Cs extends readonly string[]>(
         isGranted,
         set: flatSet,
         clear: (opts?: ServerOptions): string | void => isServer(opts) ? server.clear() : client.clear(),
-        acceptAll: (opts?: ServerOptions) => flatSet(allChoices(true), opts),
-        rejectAll: (opts?: ServerOptions) => flatSet(allChoices(false), opts),
+        acceptAll: (opts?: WriteOptions) => flatSet(allChoices(true), opts),
+        rejectAll: (opts?: WriteOptions) => flatSet(allChoices(false), opts),
         subscribe: client.subscribe,
         getServerSnapshot: client.getServerSnapshot,
         guard: client.guard,

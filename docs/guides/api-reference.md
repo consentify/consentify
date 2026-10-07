@@ -10,6 +10,8 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 |--------|------|---------|-------------|
 | `policy.categories` | `readonly string[]` | *required* | Consent categories (e.g., `['analytics', 'marketing']`) |
 | `policy.identifier` | `string` | auto-hash | Stable policy version key. Changing it invalidates existing consent |
+| `policy.textVersion` | `string` | — | Version of the policy text shown to the user, stored as `pv` on every new [consent record](#consent-record). Does not invalidate existing consent |
+| `lang` | `string` | `<html lang>` (browser) | Language of the consent UI, stored as `lang` on every new consent record. A per-call `lang` overrides it |
 | `cookie.name` | `string` | `'consentify'` | Cookie name |
 | `cookie.maxAgeSec` | `number` | `consentMaxAgeDays * 86400` if set, else `31536000` (1 year) | Cookie max-age in seconds. An explicit value always wins |
 | `cookie.sameSite` | `'Lax' \| 'Strict' \| 'None'` | `'Lax'` | SameSite attribute |
@@ -29,7 +31,9 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 
 ## Flat API (primary)
 
-Without a trailing argument the flat methods use the browser store. Passing a `ServerOptions` object, `{ cookieHeader?: string | null }`, switches them to server mode: they read the given `Cookie` header and return `Set-Cookie` strings instead of writing anything. Any object counts, so `clear({})` is server mode; a missing, empty or `null` `cookieHeader` means no consent yet.
+Without a trailing argument the flat methods use the browser store. Passing a `ServerOptions` object, `{ cookieHeader: string | null | undefined }`, switches them to server mode: they read the given `Cookie` header and return `Set-Cookie` strings instead of writing anything. The `cookieHeader` key is what selects server mode, so pass it even when there is no cookie: an `undefined`, empty or `null` value means no consent yet, while an object without the key (such as `{ source: 'banner' }`) is a client call.
+
+`set`, `acceptAll` and `rejectAll` also take `WriteOptions`, `{ source?: ConsentSource; lang?: string }`, which are stored on the [consent record](#consent-record). On the server, combine them with the header: `acceptAll({ cookieHeader, source: 'banner' })`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -37,14 +41,14 @@ Without a trailing argument the flat methods use the browser store. Passing a `S
 | `get` | `(opts: ServerOptions) => ConsentState<T>` | Read consent from `opts.cookieHeader` (server-side) |
 | `isGranted` | `(category) => boolean` | Check a single category (client-side). Unset consent follows `mode`: `false` for opt-in, `true` for opt-out |
 | `isGranted` | `(category, opts: ServerOptions) => boolean` | Same check against `opts.cookieHeader` (server-side) |
-| `set` | `(choices: Partial<Choices<T>>) => void` | Update consent choices (client-side) |
-| `set` | `(choices: Partial<Choices<T>>, opts: ServerOptions) => string` | Merges into the consent in `opts.cookieHeader`, returns a `Set-Cookie` header (server-side) |
+| `set` | `(choices: Partial<Choices<T>>, opts?: WriteOptions) => void` | Update consent choices (client-side) |
+| `set` | `(choices: Partial<Choices<T>>, opts: ServerOptions & WriteOptions) => string` | Merges into the consent in `opts.cookieHeader`, returns a `Set-Cookie` header (server-side) |
 | `clear` | `() => void` | Clear all consent data (client-side) |
 | `clear` | `(opts: ServerOptions) => string` | Returns a clearing (`Max-Age=0`) `Set-Cookie` header (server-side) |
-| `acceptAll` | `() => void` | Grant all user categories (client-side) |
-| `acceptAll` | `(opts: ServerOptions) => string` | Grant all, returns `Set-Cookie` header (server-side) |
-| `rejectAll` | `() => void` | Deny all user categories; necessary stays `true` (client-side) |
-| `rejectAll` | `(opts: ServerOptions) => string` | Deny all, returns `Set-Cookie` header (server-side) |
+| `acceptAll` | `(opts?: WriteOptions) => void` | Grant all user categories (client-side) |
+| `acceptAll` | `(opts: ServerOptions & WriteOptions) => string` | Grant all, returns `Set-Cookie` header (server-side) |
+| `rejectAll` | `(opts?: WriteOptions) => void` | Deny all user categories; necessary stays `true` (client-side) |
+| `rejectAll` | `(opts: ServerOptions & WriteOptions) => string` | Deny all, returns `Set-Cookie` header (server-side) |
 | `getProof` | `(opts?: ServerOptions) => Promise<ConsentProof<T> \| null>` | Only on instances created with `secret` (server-only). HMAC-SHA256 signed consent receipt; see [Consent Proof](#consent-proof-audit-trail) |
 | `guard` | `(category, onGrant, onRevoke?) => () => void` | Run code when consent is granted; optionally handle revocation. Returns a dispose function. With `onRevoke`, the guard re-arms after each revoke (grant → `onGrant`, revoke → `onRevoke`, repeated) until disposed. Without `onRevoke`, `onGrant` runs once and the guard stops watching |
 | `subscribe` | `(cb: () => void) => () => void` | Subscribe to changes (React-compatible) |
@@ -60,10 +64,10 @@ The `server` and `client` namespaces are still available as the low-level explic
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `server.get` | `(cookieHeader: string \| null \| undefined) => ConsentState<T>` | Read consent from a `Cookie` header |
-| `server.set` | `(choices: Partial<Choices<T>>, currentCookieHeader?: string) => string` | Returns a `Set-Cookie` header string |
+| `server.set` | `(choices: Partial<Choices<T>>, currentCookieHeader?: string \| null, opts?: WriteOptions) => string` | Returns a `Set-Cookie` header string |
 | `server.clear` | `() => string` | Returns a clearing `Set-Cookie` header |
 | `client.get` | `() => ConsentState<T>` | Current consent state. Use `isGranted(category)` for a single category |
-| `client.set` | `(choices: Partial<Choices<T>>) => void` | Update consent choices |
+| `client.set` | `(choices: Partial<Choices<T>>, opts?: WriteOptions) => void` | Update consent choices |
 | `client.clear` | `() => void` | Clear all consent data |
 | `client.guard` | `(category, onGrant, onRevoke?) => () => void` | Guard with dispose |
 | `client.subscribe` | `(cb: () => void) => () => void` | Subscribe to changes |
@@ -175,9 +179,41 @@ Convenience methods that set all user categories at once:
 consent.acceptAll();  // All categories true
 consent.rejectAll();  // All categories false (necessary stays true)
 
+// Record which UI the decision came from
+consent.acceptAll({ source: 'banner' });
+
 // Server-side: pass the request's Cookie header, get a Set-Cookie header back
 const header = consent.acceptAll({ cookieHeader });
 ```
+
+## Consent Record
+
+Each decision is stored as a `Snapshot<T>` (the `snapshot` in `ConsentState`), which is also what `'change'` events and `adapter.save()` receive. Keys are short because the record lives in a cookie:
+
+```ts
+type ConsentSource = 'banner' | 'preferences' | 'api';
+
+interface Snapshot<T> {
+  v?: 2;               // record format: 2 on every new record, absent on v1 records
+  policy: string;      // policy.identifier or category hash
+  givenAt: string;     // ISO timestamp
+  choices: Choices<T>; // { necessary: true, ...categories }
+  pv?: string;         // policy.textVersion
+  lang?: string;       // per-call lang, else init lang, else <html lang> (browser writes)
+  src?: ConsentSource; // per-call source
+}
+```
+
+Optional keys are omitted when unset. Metadata belongs to one decision: a server `set` merges `choices` from the existing cookie, but `pv`, `lang` and `src` come only from the current call and the init options. Server writes never read `<html lang>`; pass `lang` explicitly there.
+
+```ts
+consent.set({ analytics: true }, { source: 'preferences', lang: 'de' });
+consent.get(); // { decision: 'decided', snapshot: { v: 2, policy, givenAt, choices, lang: 'de', src: 'preferences' } }
+```
+
+Records written by v2.x (no `v`) are still read: with a matching policy they stay `decided`, unchanged, and the next write stores a v2 record. Any other `v`, a non-string `pv` / `lang`, or an unknown `src` makes the record invalid (treated as unset).
+
+Whether the user accepted all, rejected all or customised is not stored; it follows from `choices` and the policy's categories.
 
 ## Consent Proof (Audit Trail)
 
@@ -193,10 +229,12 @@ const consent = createConsentify({
 });
 
 const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie') });
-// { policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null when unset
+// { v: 2, policy: '...', givenAt: '2026-...', choices: {...}, src: 'banner', signature: '<64 hex chars>' } or null when unset
 
 await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true; false if any field was altered
 ```
+
+The signature covers `policy`, `givenAt`, `choices` and, when present, `v`, `pv`, `lang` and `src`; other keys on a stored proof are ignored. Proofs of v1 records (including proofs issued by v2.x) have none of the new fields and still verify.
 
 ## Consent Mode (opt-in / opt-out)
 
@@ -248,7 +286,7 @@ For non-bundled apps (WordPress, static sites), use the IIFE build:
 </script>
 ```
 
-The IIFE bundle is ~4.3kb gzipped and exposes all exports on the `Consentify` global. It is self-hosted only; for cloud mode load `dist/consentify-cloud.iife.min.js` instead (~5.6kb gzipped), which exposes the same exports plus `Consentify.createCloudConsentify` (see [below](#createcloudconsentifyinit--consentifycorecloud)).
+The IIFE bundle is ~4.4kb gzipped and exposes all exports on the `Consentify` global. It is self-hosted only; for cloud mode load `dist/consentify-cloud.iife.min.js` instead (~5.7kb gzipped), which exposes the same exports plus `Consentify.createCloudConsentify` (see [below](#createcloudconsentifyinit--consentifycorecloud)).
 
 ### CSP nonce + SRI (recommended)
 
@@ -366,14 +404,18 @@ Server mode is now selected by an options object instead of a bare string, the u
 | `consent.get(null)` | `consent.get()` (client) or `consent.get({ cookieHeader: null })` (server) |
 | — | `consent.isGranted('analytics', { cookieHeader })` (server; follows `mode` when unset) |
 | `consent.set(choices, cookieHeader)` | `consent.set(choices, { cookieHeader })` |
-| `consent.clear('anything')` | `consent.clear({})` |
+| `consent.clear('anything')` | `consent.clear({ cookieHeader })` |
 | `consent.acceptAll(cookieHeader)` / `consent.rejectAll(cookieHeader)` | `consent.acceptAll({ cookieHeader })` / `consent.rejectAll({ cookieHeader })` |
 | `consent.getProof()` without `secret` (FNV1a, forgeable) | Removed. Create a server instance with `secret` and call `await consent.getProof({ cookieHeader })` |
 | `consent.getProof(cookieHeader)` with `secret` | `await consent.getProof({ cookieHeader })` |
 | `consent.client.get('analytics')` | `consent.isGranted('analytics')` |
 | `adapter.save({ visitorId, snapshot, proof })`, `proof` always set | `proof` is optional: present only when the instance has a `secret` |
 
-`cookieHeader` may be a string, `null` or missing, so `request.headers.get('cookie')` can be passed as is. The `consent.server.*` namespace keeps its v2 signatures.
+The `cookieHeader` key must be present, since it is what selects server mode; its value may be a string, `null` or `undefined`, so `request.headers.get('cookie')` can be passed as is. The `consent.server.*` namespace keeps its v2 signatures (`server.set` gains an optional third `WriteOptions` argument).
+
+### Migrating to v3: consent record
+
+New records are [consent record v2](#consent-record): `{ v: 2, policy, givenAt, choices }` plus optional `pv`, `lang` and `src`. Stored v2.x records keep working without re-consent, and their proofs still verify. Code that compares whole snapshots or proofs against `{ policy, givenAt, choices }` should allow the new keys.
 
 ## Custom Adapters
 
@@ -400,8 +442,10 @@ const consent = createConsentify({
 });
 ```
 
-`save` is awaited on every `set()` / `acceptAll()` / `rejectAll()`. `load` is called on startup to hydrate state for the current `visitorId`.
+`save` is awaited on every `set()` / `acceptAll()` / `rejectAll()` and receives the full [consent record](#consent-record). `load` is called on startup to hydrate state for the current `visitorId`. Return the snapshot as it was saved (storing it as JSON is enough): it is validated like a cookie, so optional keys must be absent or strings, not `null`.
 
 ## Policy Versioning
 
 The `'necessary'` category is always `true` and cannot be disabled. When you change your `policy.categories` (or `policy.identifier`), all existing consent is automatically invalidated — users will be prompted again.
+
+`policy.textVersion` is different: it is recorded on new decisions (`pv`) as evidence of which text the user saw, but changing it keeps existing consent valid. Use it for wording or translation updates, and bump `policy.identifier` for material changes that need fresh consent.

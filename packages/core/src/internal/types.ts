@@ -27,16 +27,34 @@ export interface Policy<T extends UserCategory> {
      */
     identifier?: string;
     categories: readonly T[];
+    /**
+     * Version of the policy text shown to the user (e.g. `'2026-10-01'`).
+     * Recorded as `pv` on every new consent record. It does not invalidate
+     * existing consent; change `identifier` for material changes.
+     */
+    textVersion?: string;
 }
 
+/** UI that recorded a consent decision. */
+export type ConsentSource = 'banner' | 'preferences' | 'api';
+
 /**
- * Immutable snapshot of a user's consent decision for a specific policy version.
+ * Immutable consent record for a specific policy version. Optional keys are
+ * omitted when unset; keys are short because the record is stored in a cookie.
  * @template T Category string union captured in the snapshot.
  */
 export interface Snapshot<T extends UserCategory> {
+    /** Record format. `2` on every new record; absent on v1 records, which are still read. */
+    v?: 2;
     policy: string;
     givenAt: string;
     choices: Choices<T>;
+    /** Policy text version shown to the user (`policy.textVersion`). */
+    pv?: string;
+    /** Language of the consent UI. */
+    lang?: string;
+    /** UI that recorded the decision. */
+    src?: ConsentSource;
 }
 
 /**
@@ -57,19 +75,25 @@ export type StorageKind = 'cookie' | 'localStorage';
 export type ConsentMode = 'opt-in' | 'opt-out';
 
 /**
- * Passing this object to a flat instance method (`get`, `isGranted`, `set`,
- * `clear`, `acceptAll`, `rejectAll`) selects server mode. `cookieHeader` is
- * the raw request `Cookie` header; missing, empty or null means no cookie.
+ * Passing an object with a `cookieHeader` key to a flat instance method
+ * (`get`, `isGranted`, `set`, `clear`, `acceptAll`, `rejectAll`) selects
+ * server mode. The key is what counts: `cookieHeader` is the raw request
+ * `Cookie` header, and `undefined`, `null` or `''` mean no cookie.
  */
 export interface ServerOptions {
-    cookieHeader?: string | null;
+    cookieHeader: string | null | undefined;
 }
 
-/** HMAC-SHA256 signed consent proof payload. */
-export interface ConsentProof<T extends UserCategory> {
-    policy: string;
-    givenAt: string;
-    choices: Choices<T>;
+/** Per-write metadata for `set`, `acceptAll` and `rejectAll`, stored on the consent record. */
+export interface WriteOptions {
+    /** UI that recorded the decision, stored as `src`. */
+    source?: ConsentSource;
+    /** Language of the consent UI, stored as `lang`. Overrides the init `lang` and `<html lang>`. */
+    lang?: string;
+}
+
+/** HMAC-SHA256 signed consent proof: the signed record fields plus `signature`. */
+export interface ConsentProof<T extends UserCategory> extends Snapshot<T> {
     signature: string;
 }
 

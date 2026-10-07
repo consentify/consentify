@@ -11,7 +11,7 @@
   },
   {
     "path": "packages/core/dist/cloud.min.js",
-    "limit": "4.75 kb",
+    "limit": "4.8 kb",
     "gzip": true
   },
   {

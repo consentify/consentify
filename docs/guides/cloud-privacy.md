@@ -38,8 +38,9 @@ To build the instance, the SDK loads the site's configuration (categories, polic
 
 If the CDN is unreachable, slow (beyond `timeoutMs`, default 3 seconds), answers with an error, or serves a malformed config:
 
-- A cached SiteConfig, even an expired one, is used as is.
+- A cached SiteConfig past its `configTtlSec` is still used as is, up to `configMaxStaleSec` (default 7 days). An older entry is ignored, as if nothing were cached.
 - With no cache, the instance is built from the required `fallback` policy and one `console.warn` is logged. Consent keeps working: the banner, `guard()` and cookie storage behave as with a self-hosted policy.
+- On the server, a failed fetch with nothing usable cached is remembered for 30 seconds; renders in that window use `fallback` without a request instead of each waiting `timeoutMs`.
 - The factory does not reject, so the site's consent layer does not go down with the CDN.
 
 Set `fallback.identifier` to the site's published policy identifier. Otherwise the fallback has a different policy version than the published one, and returning visitors are asked again while the fallback is active.
@@ -53,7 +54,7 @@ Cloud mode uses four localStorage keys:
 | `consentify_visitor` | Visitor identifier for consent records (not used when you pass `visitorId`) | Created at the first `accept_all` or `customize` decision, never on page load. Deleted when the visitor chooses `reject_all`; otherwise kept until site data is cleared | Random UUID v4 (a `Math.random` fallback on browsers without Web Crypto) |
 | `consentify_event_buffer` | Retry buffer for the last failed event | Until the next successful send, or the next page load, which retries it once | JSON: `{ url, body, publicKey? }` - the event payload below and your public key |
 | `consentify_last_event` | Deduplication key | Persistent | `siteId\|policy\|id` (the record's random decision id; `givenAt` for records written by SDK 2.x) to prevent re-reporting the same decision |
-| `consentify_cfg_<siteId>` | SiteConfig cache | Overwritten on each refresh; fresh for `configTtlSec` (default 1 hour), then served stale while refreshing | JSON: `{ t, h, c }` - fetch time, config hash, and the site's public SiteConfig. No visitor data |
+| `consentify_cfg_<siteId>` | SiteConfig cache | Overwritten on each refresh; fresh for `configTtlSec` (default 1 hour), then served stale while refreshing, until `configMaxStaleSec` (default 7 days) | JSON: `{ t, h, c }` - fetch time, config hash, and the site's public SiteConfig. No visitor data |
 
 If localStorage is unavailable (private browsing, quota exceeded, etc.), deduplication falls back to in-memory only and the SiteConfig is fetched on every page load - no errors. Events retry on next page load if the first attempt failed.
 

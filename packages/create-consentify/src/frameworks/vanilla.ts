@@ -1,3 +1,4 @@
+import { fallbackBlock } from '../templates/consent-config.js';
 import { generateVanillaConfig } from '../templates/vanilla-config.js';
 import type { FrameworkScaffolder, GeneratedFile } from './types.js';
 
@@ -29,14 +30,13 @@ export const vanilla: FrameworkScaffolder = {
         if (ctx.useSaas) {
             // The cloud IIFE carries every core export plus createCloudConsentify.
             lines.push(
-                `    <script src="https://unpkg.com/@consentify/core/dist/consentify-cloud.iife.min.js"></script>`,
+                `    <script src="https://unpkg.com/@consentify/core@3/dist/consentify-cloud.iife.min.js"></script>`,
                 `    <script>`,
                 `      Consentify.createCloudConsentify({`,
                 `        siteId: '${ctx.siteId ?? 'your-site-id-here'}',`,
                 ...(ctx.publicKey ? [`        publicKey: '${ctx.publicKey}',`] : []),
                 `        mode: '${ctx.mode}',`,
-                `        // Used when the CDN is unreachable and no SiteConfig is cached.`,
-                `        fallback: { categories: ${JSON.stringify(ctx.categories)}, mode: '${ctx.mode}' },`,
+                ...fallbackBlock(ctx, '        ').split('\n'),
                 `      }).then((consent) => {`,
                 `        // wire your banner to consent here`,
                 `      });`,
@@ -45,7 +45,7 @@ export const vanilla: FrameworkScaffolder = {
             return lines;
         }
         lines.push(
-            `    <script src="https://unpkg.com/@consentify/core/dist/consentify.iife.min.js"></script>`,
+            `    <script src="https://unpkg.com/@consentify/core@3/dist/consentify.iife.min.js"></script>`,
             `    <script>`,
             `      const consent = Consentify.createConsentify({`,
             `        policy: { categories: ${JSON.stringify(ctx.categories)} },`,

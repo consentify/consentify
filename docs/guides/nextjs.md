@@ -376,23 +376,36 @@ import { signingConsent } from '../../../lib/consent-signing';
 
 export async function POST(request: Request) {
   const proof = await signingConsent.getProof({ cookieHeader: request.headers.get('cookie') });
-  if (proof) await db.consentProofs.insert(proof); // verify later with verifyProof(proof, secret)
+  // Make `proof.id` (the record's decision id) a unique key and ignore
+  // duplicates, so a repeated POST for the same decision stores nothing new.
+  // Verify later with verifyProof(proof, secret).
+  if (proof) await db.consentProofs.insert(proof, { onConflict: 'id', ignore: true });
   return new Response(null, { status: 204 });
 }
 ```
 
+Report from the click handler of your banner or preferences UI, not from a `change` listener. `change` also fires in every other open tab (BroadcastChannel sync) and when an adapter hydrates a saved record, so a listener would POST the same decision once per tab.
+
 ```tsx
 'use client';
 
-import { useEffect } from 'react';
 import { consent } from '../lib/consent';
 
-export function ComplianceRecorder() {
-  // The consent cookie travels with the request; the server signs what it reads.
-  useEffect(() => consent.on('change', () => { fetch('/api/compliance', { method: 'POST' }); }), []);
-  return null;
+// The write updates the cookie synchronously, so this request already carries
+// the new record; the server signs what it reads.
+const recordProof = () => { void fetch('/api/compliance', { method: 'POST', keepalive: true }); };
+
+export function ConsentButtons() {
+  return (
+    <>
+      <button onClick={() => { consent.acceptAll({ source: 'banner' }); recordProof(); }}>Accept All</button>
+      <button onClick={() => { consent.rejectAll({ source: 'banner' }); recordProof(); }}>Reject All</button>
+    </>
+  );
 }
 ```
+
+For decisions made in a server action ([section 5](#5-server-action-for-setting-consent)), sign in the action itself instead of calling the route.
 
 ## 12. Expiration Warnings
 

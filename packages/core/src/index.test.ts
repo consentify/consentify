@@ -1909,6 +1909,49 @@ describe('consent mode (opt-in / opt-out)', () => {
         if (s.decision !== 'decided') throw new Error('expected decided');
         expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: false });
     });
+
+    describe('category added under a fixed policy.identifier', () => {
+        beforeEach(() => { vi.stubGlobal('BroadcastChannel', undefined); });
+        afterEach(() => { delete (window as any).dataLayer; delete (window as any).gtag; });
+
+        const before = { identifier: 'p1', categories: ['analytics'] as const };
+        const after = { identifier: 'p1', categories: ['analytics', 'functional'] as const };
+
+        it('opt-out: reads the missing category as granted, and a later write keeps it', () => {
+            createConsentify({ policy: before, mode: 'opt-out' }).set({ analytics: true });
+            const c = createConsentify({ policy: after, mode: 'opt-out' });
+            expect(c.isGranted('functional')).toBe(true);
+            const s = c.get();
+            if (s.decision !== 'decided') throw new Error('expected decided');
+            expect(s.snapshot.choices).toEqual({ necessary: true, analytics: true, functional: true });
+            c.set({ analytics: false });
+            expect(c.isGranted('functional')).toBe(true);
+            expect(c.isGranted('analytics')).toBe(false);
+        });
+
+        it('opt-out: Consent Mode reports the missing category as granted', () => {
+            createConsentify({ policy: before, mode: 'opt-out' }).set({ analytics: true });
+            const c = createConsentify({ policy: after, mode: 'opt-out' });
+            const gtag = vi.fn();
+            (window as any).gtag = gtag;
+            enableConsentMode(c, { mapping: { functional: ['functionality_storage'] } });
+            expect(gtag).toHaveBeenCalledWith('consent', 'update', { functionality_storage: 'granted' });
+        });
+
+        it('opt-out: the server read agrees', () => {
+            const old = createConsentify({ policy: before, mode: 'opt-out' });
+            const header = setHeaderToCookieHeader(old.set({ analytics: true }, { cookieHeader: null }));
+            const c = createConsentify({ policy: after, mode: 'opt-out' });
+            expect(c.isGranted('functional', { cookieHeader: header })).toBe(true);
+        });
+
+        it('opt-in: the missing category still reads as denied', () => {
+            createConsentify({ policy: before }).set({ analytics: true });
+            const c = createConsentify({ policy: after });
+            expect(c.isGranted('functional')).toBe(false);
+            expect(c.isGranted('analytics')).toBe(true);
+        });
+    });
 });
 
 // ============================================================
@@ -3154,6 +3197,43 @@ describe('Cloud mode (Mode B)', () => {
         await new Promise(r => setTimeout(r, 0));
         expect((await createCloudConsentify(init)).cloud.source).toBe('cache');
         expect(spy).toHaveBeenCalledTimes(3);
+    });
+
+    it('waits for the network when the cache is older than configMaxStaleSec', async () => {
+        seedCache(8 * 24 * HOUR, 'old', { categories: ['analytics'], policyIdentifier: 'v0' });
+        stubConfigFetch({ categories: ['analytics', 'marketing'], policyIdentifier: 'v2' }, 'new');
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('network');
+        expect(c.policy.identifier).toBe('v2');
+        expect(readCache().h).toBe('new');
+    });
+
+    it('a too-old cache is not served when the network fails: fallback', async () => {
+        seedCache(2 * HOUR, 'old', { categories: ['analytics'], policyIdentifier: 'v0' });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB, configMaxStaleSec: 3600 });
+        expect(c.cloud.source).toBe('fallback');
+        expect(c.policy.identifier).toBe('v1');
+    });
+
+    it('server: after a failed fetch the fallback is used at once for 30 s', async () => {
+        vi.stubGlobal('document', undefined);
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const down = vi.fn(() => Promise.reject(new Error('network down')));
+        vi.stubGlobal('fetch', down);
+        const init = { siteId: 'srv_neg', endpoints: EP, fallback: FB };
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        expect((await createCloudConsentify(init)).cloud.source).toBe('fallback');
+        expect(down).toHaveBeenCalledOnce();
+        vi.setSystemTime(t0 + 29_000);
+        expect((await createCloudConsentify(init)).cloud.source).toBe('fallback');
+        expect(down).toHaveBeenCalledOnce();
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        vi.setSystemTime(t0 + 31_000);
+        expect((await createCloudConsentify(init)).cloud.source).toBe('network');
+        expect(spy).toHaveBeenCalledTimes(2);
     });
 
     it('server: a different endpoint is a separate memo entry', async () => {

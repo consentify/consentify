@@ -122,17 +122,19 @@ describe('vanilla scaffolder', () => {
 
     it('points script-tag users at the core IIFE when self-hosted', () => {
         const out = scaffolder.instructions(ctx({ framework: 'vanilla' })).join('\n');
-        expect(out).toContain('/dist/consentify.iife.min.js');
+        expect(out).toContain('https://unpkg.com/@consentify/core@3/dist/consentify.iife.min.js');
         expect(out).toContain('Consentify.createConsentify({');
         expect(out).not.toContain('consentify-cloud');
     });
 
     it('points script-tag users at the cloud IIFE in SaaS mode', () => {
         const out = scaffolder.instructions(ctx({ framework: 'vanilla', useSaas: true, siteId: 'site_xyz' })).join('\n');
-        expect(out).toContain('/dist/consentify-cloud.iife.min.js');
+        expect(out).toContain('https://unpkg.com/@consentify/core@3/dist/consentify-cloud.iife.min.js');
         expect(out).toContain('Consentify.createCloudConsentify({');
         expect(out).toContain(`siteId: 'site_xyz'`);
-        expect(out).toContain(`fallback: { categories: ["analytics","marketing"], mode: 'opt-in' },`);
+        // Same fallback block as consent-config.ts, including the identifier hint.
+        expect(out).toContain(`        fallback: {\n            categories: ['analytics', 'marketing'],\n            mode: 'opt-in',\n`);
+        expect(out).toContain(`// identifier: 'your-policy-identifier',`);
         expect(out).not.toContain('Consentify.createConsentify(');
     });
 });

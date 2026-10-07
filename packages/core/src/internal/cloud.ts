@@ -281,23 +281,30 @@ export function fetchSiteConfig(
     ]).finally(() => clearTimeout(timer));
 }
 
-interface ConfigSlot { e?: CachedSiteConfig; p?: Promise<CachedSiteConfig | null> }
+// `f`: when the last fetch for a slot without a usable entry failed (epoch ms).
+interface ConfigSlot { e?: CachedSiteConfig; p?: Promise<CachedSiteConfig | null>; f?: number }
 // Server-side memo keyed by `endpoint|siteId`, so SSR does not fetch per request.
 const serverMemo = new Map<string, ConfigSlot>();
+/** After a failed fetch with nothing to serve, the server uses the fallback at once for this long. */
+export const CONFIG_FAIL_TTL_MS = 30_000;
 
 /**
  * Resolve a SiteConfig with stale-while-revalidate caching: localStorage
  * (`consentify_cfg_<siteId>`) in the browser, an in-module Map elsewhere
- * (concurrent calls share one in-flight request). Fresh cache: no network.
- * Stale cache: returned at once and refreshed in the background (the cache
- * only; a running instance keeps its policy). No cache: wait for the network.
- * Resolves `['fallback']` when nothing usable is available.
+ * (concurrent calls share one in-flight request). Fresh cache (younger than
+ * `ttlMs`): no network. Stale cache (younger than `maxStaleMs`): returned at
+ * once and refreshed in the background (the cache only; a running instance
+ * keeps its policy). No cache, or older than `maxStaleMs`: wait for the
+ * network. Resolves `['fallback']` when nothing usable is available. On the
+ * server a failed fetch is remembered for `CONFIG_FAIL_TTL_MS`, so an outage
+ * costs one `timeoutMs` wait per window instead of one per request.
  */
 export async function loadSiteConfig(
     siteId: string,
     endpoint: string,
     timeoutMs: number,
     ttlMs: number,
+    maxStaleMs: number,
 ): Promise<[SiteConfigSource, SiteConfig?]> {
     const lsKey = CONFIG_CACHE_PREFIX + siteId;
     const browser = isBrowser();
@@ -313,14 +320,18 @@ export async function loadSiteConfig(
             if (isSiteConfig(e?.c)) slot.e = e;
         } catch { /* blocked or corrupt: no cache */ }
     }
-    const cached = slot.e;
-    // A non-numeric or future `t` (clock moved back) yields NaN/negative: stale.
-    const age = cached ? Date.now() - cached.t : -1;
-    if (cached && age >= 0 && age < ttlMs) return ['cache', cached.c];
+    // A non-numeric or future `t` (clock moved back) yields NaN/negative: too old.
+    const age = slot.e ? Date.now() - slot.e.t : -1;
+    if (slot.e && age >= 0 && age < ttlMs) return ['cache', slot.e.c];
+    // Past `maxStaleMs` the entry is not served (the policy may have changed
+    // long ago), but its hash still lets the fetch skip the second hop.
+    const cached = age >= 0 && age < maxStaleMs ? slot.e : undefined;
+    if (!cached && slot.f && Date.now() - slot.f < CONFIG_FAIL_TTL_MS) return ['fallback'];
     if (!slot.p) {
-        slot.p = fetchSiteConfig(`${endpoint.replace(/\/$/, '')}/config/${siteId}/`, timeoutMs, cached)
+        slot.p = fetchSiteConfig(`${endpoint.replace(/\/$/, '')}/config/${siteId}/`, timeoutMs, slot.e)
             .then(e => {
                 slot.p = undefined;
+                slot.f = e ? undefined : Date.now();
                 if (e) {
                     slot.e = e;
                     try {

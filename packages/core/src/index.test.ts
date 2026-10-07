@@ -545,7 +545,7 @@ describe('client.guard()', () => {
         expect(onRevoke).toHaveBeenCalledTimes(1);
     });
 
-    it('does not fire onGrant again after revoke', () => {
+    it('re-arms after revoke when onRevoke is set (grant → revoke → grant → revoke)', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         const onGrant = vi.fn();
         const onRevoke = vi.fn();
@@ -553,6 +553,49 @@ describe('client.guard()', () => {
         c.client.set({ analytics: true });
         c.client.set({ analytics: false });
         c.client.set({ analytics: true });
+        expect(onGrant).toHaveBeenCalledTimes(2);
+        expect(onRevoke).toHaveBeenCalledTimes(1);
+        c.client.set({ analytics: false });
+        expect(onGrant).toHaveBeenCalledTimes(2);
+        expect(onRevoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-arms after revoke via clear()', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const onGrant = vi.fn();
+        const onRevoke = vi.fn();
+        c.client.guard('analytics', onGrant, onRevoke);
+        c.client.set({ analytics: true });
+        c.client.clear();
+        expect(onRevoke).toHaveBeenCalledTimes(1);
+        c.client.set({ analytics: true });
+        expect(onGrant).toHaveBeenCalledTimes(2);
+        c.client.clear();
+        expect(onRevoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('unrelated changes while granted do not re-fire onGrant', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
+        const onGrant = vi.fn();
+        const onRevoke = vi.fn();
+        c.client.guard('analytics', onGrant, onRevoke);
+        c.client.set({ analytics: true });
+        c.client.set({ marketing: true });
+        c.client.set({ marketing: false });
+        expect(onGrant).toHaveBeenCalledTimes(1);
+        expect(onRevoke).not.toHaveBeenCalled();
+    });
+
+    it('dispose after a revoke stops further calls', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const onGrant = vi.fn();
+        const onRevoke = vi.fn();
+        const dispose = c.client.guard('analytics', onGrant, onRevoke);
+        c.client.set({ analytics: true });
+        c.client.set({ analytics: false });
+        dispose();
+        c.client.set({ analytics: true });
+        c.client.set({ analytics: false });
         expect(onGrant).toHaveBeenCalledTimes(1);
         expect(onRevoke).toHaveBeenCalledTimes(1);
     });
@@ -594,6 +637,16 @@ describe('client.guard()', () => {
         expect(onGrant).toHaveBeenCalledTimes(1);
         // Subsequent changes should not trigger anything
         c.client.set({ analytics: false });
+        c.client.set({ analytics: true });
+        expect(onGrant).toHaveBeenCalledTimes(1);
+    });
+
+    it('without onRevoke stays one-shot after clear() and re-grant', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const onGrant = vi.fn();
+        c.client.guard('analytics', onGrant);
+        c.client.set({ analytics: true });
+        c.client.clear();
         c.client.set({ analytics: true });
         expect(onGrant).toHaveBeenCalledTimes(1);
     });

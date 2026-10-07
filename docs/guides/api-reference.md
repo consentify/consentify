@@ -45,7 +45,7 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `rejectAll` | `(cookieHeader: string) => string` | Deny all, returns `Set-Cookie` header (server-side) |
 | `getProof` | `() => ConsentProof<T> \| null` | Tamper-evident consent receipt for audit trails |
 | `getProof` | `(cookieHeader: string) => ConsentProof<T> \| null` | Server-side consent proof |
-| `guard` | `(category, onGrant, onRevoke?) => () => void` | Run code when consent is granted; optionally handle revocation. Returns a dispose function |
+| `guard` | `(category, onGrant, onRevoke?) => () => void` | Run code when consent is granted; optionally handle revocation. Returns a dispose function. With `onRevoke`, the guard re-arms after each revoke (grant → `onGrant`, revoke → `onRevoke`, repeated) until disposed. Without `onRevoke`, `onGrant` runs once and the guard stops watching |
 | `subscribe` | `(cb: () => void) => () => void` | Subscribe to changes (React-compatible) |
 | `getServerSnapshot` | `() => ConsentState<T>` | Always returns `{ decision: 'unset' }` for SSR |
 | `on` | `(type, handler) => () => void` | Subscribe to typed events (`'change'`, `'clear'`, `'expiring'`). Returns unsubscribe |

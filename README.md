@@ -88,6 +88,8 @@ const dispose = consent.guard(
 dispose();
 ```
 
+With `onRevoke`, the guard re-arms after each revoke: a later re-grant calls `onGrant` again, the next revoke calls `onRevoke` again, until you call `dispose()`. Without `onRevoke`, `onGrant` runs once and the guard stops watching.
+
 ```ts
 // Your cookie banner UI (framework-agnostic)
 import { consent } from './lib/consent';

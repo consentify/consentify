@@ -691,25 +691,22 @@ function createSelfHostedInstance<Cs extends readonly string[]>(
             onGrant: () => void,
             onRevoke?: () => void,
         ): (() => void) => {
-            let phase: 'waiting' | 'granted' | 'done' = 'waiting';
-            const check = () => clientGet(category) === true;
+            // With onRevoke: re-arms after every revoke until disposed.
+            // Without onRevoke: one-shot, unsubscribes on first grant.
+            let granted = false;
 
             const tick = () => {
-                if (phase === 'waiting' && check()) {
-                    onGrant();
-                    phase = onRevoke ? 'granted' : 'done';
-                    if (phase === 'done') unsub();
-                } else if (phase === 'granted' && !check()) {
-                    onRevoke!();
-                    phase = 'done';
-                    unsub();
-                }
+                if (clientGet(category) === granted) return;
+                granted = !granted;
+                if (!granted) return onRevoke!();
+                if (!onRevoke) unsub();
+                onGrant();
             };
 
             const unsub = client.subscribe(tick);
             tick();
 
-            return () => { phase = 'done'; unsub(); };
+            return unsub;
         },
     };
 

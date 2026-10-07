@@ -2570,7 +2570,7 @@ describe('Cloud mode (Mode B)', () => {
     });
 
     const stubConfigFetch = (
-        siteCfg: { categories: string[]; policyIdentifier: string; mode?: 'opt-in' | 'opt-out' },
+        siteCfg: { categories: string[]; policyIdentifier: string; mode?: 'opt-in' | 'opt-out'; [k: string]: unknown },
         latestHash = 'abc123',
     ): ReturnType<typeof vi.fn> => {
         const spy = vi.fn((url: string) => {
@@ -2744,6 +2744,88 @@ describe('Cloud mode (Mode B)', () => {
             const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
             expect(c.cloud.source).toBe('fallback');
         }
+    });
+
+    // --- SiteConfig v2 ---
+    const VENDORS = [
+        { id: 'ga4', category: 'analytics', name: 'Google Analytics', privacyPolicyUrl: 'https://policies.google.com/privacy' },
+        { id: 'hotjar', category: 'analytics', name: 'Hotjar' },
+    ];
+
+    it('accepts a v2 SiteConfig and exposes its data fields on consent.cloud.config', async () => {
+        const cfg = {
+            v: 2, categories: ['analytics'], policyIdentifier: 'v1', policyTextVersion: '2026-10-01',
+            locales: ['en', 'de'], defaultLocale: 'en', vendors: VENDORS, futureField: { x: 1 },
+        };
+        stubConfigFetch(cfg);
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('network');
+        expect(c.cloud.config).toEqual(cfg);
+        expect(c.policy.identifier).toBe('v1');
+    });
+
+    it('records pv from SiteConfig policyTextVersion', async () => {
+        stubConfigFetch({ v: 2, categories: ['analytics'], policyIdentifier: 'v1', policyTextVersion: '2026-10-01' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: { ...FB, textVersion: 'fb-text' } });
+        c.set({ analytics: true });
+        const s = c.get();
+        expect(s.decision === 'decided' && s.snapshot.pv).toBe('2026-10-01');
+    });
+
+    it('records pv from fallback.textVersion when the fallback is in use', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: { ...FB, textVersion: 'fb-text' } });
+        expect(c.cloud.source).toBe('fallback');
+        expect(c.cloud.config.policyTextVersion).toBe('fb-text');
+        c.acceptAll();
+        const s = c.get();
+        expect(s.decision === 'decided' && s.snapshot.pv).toBe('fb-text');
+    });
+
+    it('a config without policyTextVersion records no pv, and init lang is recorded', async () => {
+        stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: { ...FB, textVersion: 'fb-text' }, lang: 'de-AT' });
+        c.set({ analytics: true }, { source: 'banner' });
+        const s = c.get();
+        if (s.decision !== 'decided') throw new Error('expected decided');
+        expect(s.snapshot).not.toHaveProperty('pv');
+        expect(s.snapshot).toMatchObject({ v: 2, lang: 'de-AT', src: 'banner' });
+    });
+
+    it('treats a SiteConfig with malformed v2 fields as malformed (fallback path)', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const base = { categories: ['analytics'], policyIdentifier: 'v1' };
+        const bad: Record<string, unknown>[] = [
+            { vendors: 'ga4' },
+            { vendors: [{ id: 'ga4', category: 'analytics' }] }, // no name
+            { vendors: [{ id: 'ga4', category: 'analytics', name: 'GA', privacyPolicyUrl: 42 }] },
+            { vendors: [null] },
+            { locales: 'en' },
+            { locales: ['en', 7] },
+            { defaultLocale: null },
+            { policyTextVersion: 20261001 },
+            { v: 3 },
+            { policyIdentifier: '' },
+        ];
+        for (const extra of bad) {
+            vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(new Response(JSON.stringify(
+                url.endsWith('/latest.json') ? { current: 'h1' } : { ...base, ...extra },
+            )))));
+            const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+            expect(c.cloud.source, JSON.stringify(extra)).toBe('fallback');
+        }
+        expect(readCache()).toBeNull();
+    });
+
+    it('ignores a cached SiteConfig with malformed vendors', async () => {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+            t: Date.now(), h: 'h0', c: { categories: ['analytics'], policyIdentifier: 'v0', vendors: [{ id: 1 }] },
+        }));
+        stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+        expect(c.cloud.source).toBe('network');
+        expect(c.policy.identifier).toBe('v1');
     });
 
     it('caches the fetched SiteConfig with its hash in localStorage', async () => {

@@ -329,16 +329,16 @@ const consent = await createCloudConsentify({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `siteId` | `string` | *required* | Site whose SiteConfig is fetched and to which events are reported |
-| `fallback` | `{ categories: readonly string[]; identifier?: string; mode?: ConsentMode; consentMaxAgeDays?: number }` | *required* | Local policy used when no SiteConfig is available (network error, timeout, non-OK status, malformed config) and nothing is cached. Set `identifier` to the site's published `policyIdentifier`; otherwise returning visitors see the banner again while the fallback is active |
+| `fallback` | `{ categories: readonly string[]; identifier?: string; textVersion?: string; mode?: ConsentMode; consentMaxAgeDays?: number }` | *required* | Local policy used when no SiteConfig is available (network error, timeout, non-OK status, malformed config) and nothing is cached. Set `identifier` to the site's published `policyIdentifier`; otherwise returning visitors see the banner again while the fallback is active. `textVersion` is recorded as `pv` while the fallback is in use |
 | `timeoutMs` | `number` | `3000` | Deadline for the whole two-hop SiteConfig fetch; the requests are aborted when it passes |
 | `configTtlSec` | `number` | `3600` | How long a cached SiteConfig is used without a request. After that it is served stale and refreshed in the background |
 | `apiKey` | `string` | — | API key sent with ingest events |
 | `endpoints.config` | `string` | `https://cdn.consentify.dev` | SiteConfig CDN |
 | `endpoints.ingest` | `string` | `https://ingest.consentify.dev` | Ingest endpoint |
 | `mode`, `consentMaxAgeDays` | | from SiteConfig | Local values override the SiteConfig (or `fallback`) |
-| `cookie`, `expirationWarningDays`, `storage`, `secret`, `adapter`, `visitorId` | | | Same as [`createConsentify`](#createconsentifyinit) |
+| `cookie`, `expirationWarningDays`, `storage`, `lang`, `secret`, `adapter`, `visitorId` | | | Same as [`createConsentify`](#createconsentifyinit) |
 
-`policy` is not accepted: categories and the policy identifier come from the SiteConfig. With `secret` (server-only) it resolves to an instance whose `getProof()` is HMAC-signed. The `CloudInit`, `CloudFallback`, `CloudInfo`, `SiteConfig` and `SiteConfigSource` types are exported from `@consentify/core/cloud`. Core and cloud share one copy of the core code, so `ConsentifyConfigError` from `@consentify/core` matches errors thrown by the cloud factory.
+`policy` is not accepted: categories, the policy identifier and the policy text version (`policyTextVersion`, recorded as `pv` on every new record) come from the SiteConfig. With `secret` (server-only) it resolves to an instance whose `getProof()` is HMAC-signed. The `CloudInit`, `CloudFallback`, `CloudInfo`, `SiteConfig`, `SiteConfigSource` and `Vendor` types are exported from `@consentify/core/cloud`. Core and cloud share one copy of the core code, so `ConsentifyConfigError` from `@consentify/core` matches errors thrown by the cloud factory.
 
 #### SiteConfig loading, caching and offline behavior
 
@@ -352,10 +352,26 @@ The returned instance exposes the outcome for debugging:
 
 ```ts
 consent.cloud.source; // 'network' | 'cache' | 'stale' | 'fallback'
-consent.cloud.config; // the SiteConfig in use ({ categories, policyIdentifier, mode?, consentMaxAgeDays? })
+consent.cloud.config; // the SiteConfig in use (see below)
 ```
 
-When `source` is `'fallback'`, `config` is your `fallback` in SiteConfig shape (`policyIdentifier` is `fallback.identifier`, or the category hash when it is omitted).
+When `source` is `'fallback'`, `config` is your `fallback` in SiteConfig shape (`policyIdentifier` is `fallback.identifier`, or the category hash when it is omitted; `policyTextVersion` is `fallback.textVersion`).
+
+The SiteConfig (v2) has this shape. `locales`, `defaultLocale` and `vendors` are data for your consent UI: the SDK validates their types but attaches no consent logic to them. A wrong type in any field makes the whole config malformed, so the cache or `fallback` is used instead.
+
+```ts
+interface SiteConfig {
+  v?: 2;
+  categories: readonly string[];
+  policyIdentifier: string;    // non-empty; changing it asks every visitor again
+  policyTextVersion?: string;  // recorded as `pv`; changing it keeps existing consent
+  mode?: 'opt-in' | 'opt-out';
+  consentMaxAgeDays?: number;
+  locales?: string[];          // BCP 47 tags the banner is published in
+  defaultLocale?: string;
+  vendors?: Vendor[];          // { id, category, name, privacyPolicyUrl? }
+}
+```
 
 Script-tag sites use the cloud IIFE, which exposes every core export plus `createCloudConsentify` on the `Consentify` global:
 

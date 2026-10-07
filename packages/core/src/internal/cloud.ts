@@ -3,14 +3,34 @@ import { canLocalStorage, isBrowser, logW } from './util';
 import { dropStoredVisitorId, ephemeralVisitorId, readOrCreateStoredVisitorId, resolveVisitorId } from './visitor';
 
 /**
+ * Third-party vendor listed in a SiteConfig. Data for the consent UI only:
+ * the SDK attaches no consent logic to vendors.
+ */
+export interface Vendor {
+    id: string;
+    /** Consent category the vendor belongs to. */
+    category: string;
+    name: string;
+    privacyPolicyUrl?: string;
+}
+
+/**
  * Site configuration published to the CDN. Fields beyond these pass through
  * unchanged, so new optional fields can be added without breaking caches.
  */
 export interface SiteConfig {
+    /** SiteConfig format: `2`, or absent on v1 configs. */
+    v?: 2;
     categories: readonly string[];
     policyIdentifier: string;
+    /** Policy text version, recorded as `pv` on every new consent record. */
+    policyTextVersion?: string;
     mode?: ConsentMode;
     consentMaxAgeDays?: number;
+    /** Locales the consent UI is published in (BCP 47 tags). */
+    locales?: string[];
+    defaultLocale?: string;
+    vendors?: Vendor[];
 }
 
 /** Where a cloud instance got its SiteConfig from. */
@@ -174,8 +194,17 @@ export interface CachedSiteConfig { t: number; h: string; c: SiteConfig }
 
 export const CONFIG_CACHE_PREFIX = 'consentify_cfg_';
 
+const isStr = (x: unknown): x is string => typeof x === 'string';
+const optStr = (x: unknown): boolean => x === undefined || isStr(x);
+const optArr = <T>(x: T[] | undefined, ok: (i: T) => boolean): boolean =>
+    x === undefined || (Array.isArray(x) && x.every(ok));
+
+// Light shape check; a wrong type anywhere makes the whole config malformed.
 const isSiteConfig = (c?: Partial<SiteConfig> | null): c is SiteConfig =>
-    !!c && Array.isArray(c.categories) && typeof c.policyIdentifier === 'string';
+    !!c && Array.isArray(c.categories) && !!c.policyIdentifier && isStr(c.policyIdentifier) &&
+    (c.v === undefined || c.v === 2) && optStr(c.policyTextVersion) && optStr(c.defaultLocale) &&
+    optArr(c.locales, isStr) &&
+    optArr(c.vendors, x => !!x && isStr(x.id) && isStr(x.category) && isStr(x.name) && optStr(x.privacyPolicyUrl));
 
 /**
  * Fetch the current SiteConfig within one `timeoutMs` deadline for both hops.

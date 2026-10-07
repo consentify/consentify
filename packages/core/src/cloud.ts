@@ -23,7 +23,7 @@ import {
 } from './internal/cloud';
 import { TAG, hashPolicy, isBrowser, logW } from './internal/util';
 
-export type { SiteConfig, SiteConfigSource } from './internal/cloud';
+export type { SiteConfig, SiteConfigSource, Vendor } from './internal/cloud';
 
 /**
  * Local policy used when no SiteConfig is available: the CDN is unreachable,
@@ -38,6 +38,8 @@ export interface CloudFallback {
      * returning visitors see the banner again while the fallback is active.
      */
     identifier?: string;
+    /** Policy text version recorded as `pv` while the fallback is active (`policyTextVersion` in a SiteConfig). */
+    textVersion?: string;
     mode?: ConsentMode;
     consentMaxAgeDays?: number;
 }
@@ -75,6 +77,8 @@ export interface CloudInit {
     consentMaxAgeDays?: number;
     expirationWarningDays?: number;
     storage?: StorageKind[];
+    /** Language of the consent UI, recorded as `lang`. Same as in `createConsentify`. */
+    lang?: string;
     secret?: string;
     /**
      * Custom storage backend. In cloud mode the category union is only known
@@ -121,6 +125,7 @@ export async function createCloudConsentify(
     const siteCfg: SiteConfig = fetched ?? {
         categories: fb.categories,
         policyIdentifier: fb.identifier ?? hashPolicy(fb.categories),
+        policyTextVersion: fb.textVersion,
         mode: fb.mode,
         consentMaxAgeDays: fb.consentMaxAgeDays,
     };
@@ -130,7 +135,9 @@ export async function createCloudConsentify(
         policy: {
             categories: siteCfg.categories,
             identifier: siteCfg.policyIdentifier,
+            textVersion: siteCfg.policyTextVersion,
         },
+        lang: init.lang,
         cookie: init.cookie,
         mode: init.mode ?? siteCfg.mode,
         consentMaxAgeDays: init.consentMaxAgeDays ?? siteCfg.consentMaxAgeDays,

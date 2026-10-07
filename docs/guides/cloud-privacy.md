@@ -32,7 +32,7 @@ Consentify reports consent changes to the hosted platform for audit trails and a
 
 ## SiteConfig Requests
 
-To build the instance, the SDK loads the site's configuration (categories, policy identifier, defaults) with plain `GET` requests to `https://cdn.consentify.dev/config/<siteId>/latest.json` and `/config/<siteId>/<hash>.json` (or your `endpoints.config`). The SDK adds no visitor identifier, consent choices or API key to these requests. The result is cached (see below), so most page loads and server renders make no request at all.
+To build the instance, the SDK loads the site's configuration (categories, policy identifier and text version, defaults, banner locales and vendor list) with plain `GET` requests to `https://cdn.consentify.dev/config/<siteId>/latest.json` and `/config/<siteId>/<hash>.json` (or your `endpoints.config`). The SDK adds no visitor identifier, consent choices or API key to these requests. The result is cached (see below), so most page loads and server renders make no request at all.
 
 ## Offline Behavior
 

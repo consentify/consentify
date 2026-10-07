@@ -75,7 +75,7 @@ The one thing lost is telling an "Accept all" click from a custom selection that
 `isValidSnapshot` accepts:
 
 - **v1**: no `v` key, same rules as today.
-- **v2**: `v === 2`; `id`, `pv` and `lang`, when present, must be strings; `src`, when present, must be one of the three sources.
+- **v2**: `v === 2`; `id`, `pv`, `lang` and `src`, when present, must be strings. `src` is not checked against the three sources on read: a later 3.x minor may add a source, and a 3.0 page must not treat such a record as unset. Writes still drop an unknown source (see above).
 
 Any other `v` is rejected, so a future format needs an explicit reader instead of being misread. A v1 cookie (or adapter record) with a matching policy hash stays `decided`: upgrading the SDK forces no re-consent. It is returned as stored, without `v`, `id` or metadata, and is not rewritten on read; rewriting would invent metadata the user never saw. The next write by the user produces a v2 record. That is why `v` and `id` are optional in the `Snapshot` type even though every new record has them.
 
@@ -108,4 +108,4 @@ A field that is absent (or `null`) is left out of the signed body. A proof issue
 
 ## Testing
 
-`packages/core/src/index.test.ts`: new records have `v: 2` and a 12-hex `id` (a new one per write, also without Web Crypto) and omit unset keys; `pv` from `policy.textVersion`; `lang` from init, `<html lang>` and per-call override; `src` per call on `set` / `acceptAll` / `rejectAll`, client and server; `set(choices, { source })` stays client-side; `set(choices, { cookieHeader: undefined })` is server mode; a v1 cookie still reads as decided; invalid `src`, non-string `id` / `pv` and unknown `v` are rejected; tampering `id` or `src` fails `verifyProof`; a 2.x-style v1 proof still verifies.
+`packages/core/src/index.test.ts`: new records have `v: 2` and a 12-hex `id` (a new one per write, also without Web Crypto) and omit unset keys; `pv` from `policy.textVersion`; `lang` from init, `<html lang>` and per-call override; `src` per call on `set` / `acceptAll` / `rejectAll`, client and server; `set(choices, { source })` stays client-side; `set(choices, { cookieHeader: undefined })` is server mode; a v1 cookie still reads as decided; non-string `id` / `pv` / `src` and unknown `v` are rejected while an unknown string `src` reads as decided; tampering `id` or `src` fails `verifyProof`; a 2.x-style v1 proof still verifies.

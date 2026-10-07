@@ -23,8 +23,9 @@ export function buildSetCookieHeader(name: string, value: string, opt: CookieOpt
  * for framework cookie setters (lowercase `sameSite`, `maxAge` in seconds), so
  * the instance's cookie config is applied instead of being re-typed by hand.
  * `value` is URI-decoded, ready for setters that encode values themselves
- * (Next.js, SvelteKit, Express). Written for the
- * SDK's own output (Path, Max-Age, Domain, SameSite, Secure, Partitioned);
+ * (Next.js, SvelteKit). Express `res.cookie()` takes `maxAge` in
+ * milliseconds: `res.cookie(name, value, { ...options, maxAge: options.maxAge! * 1000 })`.
+ * Written for the SDK's own output (Path, Max-Age, Domain, SameSite, Secure, Partitioned);
  * kept minimal for bundle size, so other attributes pass through under their
  * lowercased name and values containing `=` are not supported.
  *

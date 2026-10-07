@@ -13,7 +13,7 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `policy.textVersion` | `string` | — | Version of the policy text shown to the user, stored as `pv` on every new [consent record](#consent-record). Does not invalidate existing consent |
 | `lang` | `string` | `<html lang>` (browser) | Language of the consent UI, stored as `lang` on every new consent record. A per-call `lang` overrides it |
 | `cookie.name` | `string` | `'consentify'` | Cookie name |
-| `cookie.maxAgeSec` | `number` | `consentMaxAgeDays * 86400` if set, else `31536000` (1 year) | Cookie max-age in seconds. An explicit value always wins |
+| `cookie.maxAgeSec` | `number` | `consentMaxAgeDays * 86400` if set, else `31536000` (1 year) | Cookie max-age in seconds, rounded down to whole seconds (a fractional `Max-Age` is ignored by browsers). An explicit value always wins |
 | `cookie.sameSite` | `'Lax' \| 'Strict' \| 'None'` | `'Lax'` | SameSite attribute |
 | `cookie.secure` | `boolean` | `true` | Secure flag (forced `true` when `sameSite: 'None'` or `partitioned: true`) |
 | `cookie.path` | `string` | `'/'` | Cookie path |
@@ -79,7 +79,7 @@ The `server` and `client` namespaces are still available as the low-level explic
 
 ## `parseSetCookie(header)`
 
-Pure helper that splits a `Set-Cookie` header returned by the server API (`set`, `clear`, `acceptAll`, `rejectAll`) into `{ name, value, options }` for framework cookie setters. `options` carries the instance's cookie config as `{ path?, maxAge?, domain?, sameSite?, secure?, partitioned? }` with lowercase `sameSite` and `maxAge` in seconds; absent attributes are omitted. `value` is URI-decoded, so it can go straight into setters that encode values themselves (Next.js, SvelteKit, Express).
+Pure helper that splits a `Set-Cookie` header returned by the server API (`set`, `clear`, `acceptAll`, `rejectAll`) into `{ name, value, options }` for framework cookie setters. `options` carries the instance's cookie config as `{ path?, maxAge?, domain?, sameSite?, secure?, partitioned? }` with lowercase `sameSite` and `maxAge` in seconds; absent attributes are omitted. `value` is URI-decoded, so it can go straight into setters that encode values themselves (Next.js, SvelteKit).
 
 ```ts
 import { cookies } from 'next/headers';
@@ -88,6 +88,13 @@ import { parseSetCookie } from '@consentify/core';
 const cookieStore = await cookies();
 const { name, value, options } = parseSetCookie(consent.acceptAll({ cookieHeader: cookieStore.toString() }));
 cookieStore.set(name, value, options);
+```
+
+Express also encodes values, but its `res.cookie()` takes `maxAge` in milliseconds, so convert it:
+
+```ts
+const { name, value, options } = parseSetCookie(consent.acceptAll({ cookieHeader: req.headers.cookie }));
+res.cookie(name, value, { ...options, maxAge: options.maxAge! * 1000 });
 ```
 
 ## `enableConsentMode(instance, options)`
@@ -217,7 +224,7 @@ consent.set({ analytics: true }, { source: 'preferences', lang: 'de' });
 consent.get(); // { decision: 'decided', snapshot: { v: 2, id, policy, givenAt, choices, lang: 'de', src: 'preferences' } }
 ```
 
-Records written by v2.x (no `v`, no `id`) are still read: with a matching policy they stay `decided`, unchanged, and the next write stores a v2 record. Any other `v`, a non-string `id` / `pv` / `lang`, or an unknown `src` makes the record invalid (treated as unset).
+Records written by v2.x (no `v`, no `id`) are still read: with a matching policy they stay `decided`, unchanged, and the next write stores a v2 record. Any other `v`, or a non-string `id` / `pv` / `lang` / `src`, makes the record invalid (treated as unset). An `src` value this version does not know is read as is, so records written by a later 3.x minor with a new source stay valid; writes store only the three known sources.
 
 Whether the user accepted all, rejected all or customised is not stored; it follows from `choices` and the policy's categories.
 

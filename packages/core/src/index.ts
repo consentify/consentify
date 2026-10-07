@@ -105,7 +105,7 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
     cookie?: {
         name?: string; sameSite?: 'Lax'|'Strict'|'None';
         secure?: boolean; path?: string; domain?: string;
-        /** Cookie Max-Age in seconds. Default: `consentMaxAgeDays * 86400` when that is set, otherwise one year. */
+        /** Cookie Max-Age in seconds (rounded down to whole seconds). Default: `consentMaxAgeDays * 86400` when that is set, otherwise one year. */
         maxAgeSec?: number;
         /** Adds the CHIPS `Partitioned` attribute (forces `Secure`). For embedded / third-party iframe contexts. */
         partitioned?: boolean;
@@ -284,7 +284,8 @@ export function createConsentify<Cs extends readonly string[]>(
     const cookieCfg: CookieOpt = {
         path: init.cookie?.path ?? '/',
         // Cookie lifetime follows consent lifetime unless set explicitly; default one year.
-        maxAgeSec: init.cookie?.maxAgeSec ?? (consentMaxAgeDays || 365) * 86400,
+        // Whole seconds: RFC 6265 parsers ignore a fractional Max-Age.
+        maxAgeSec: Math.floor(init.cookie?.maxAgeSec ?? (consentMaxAgeDays || 365) * 86400),
         sameSite,
         secure: sameSite === 'None' || partitioned ? true : (init.cookie?.secure ?? true),
         domain: init.cookie?.domain,

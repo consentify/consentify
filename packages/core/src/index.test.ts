@@ -1304,6 +1304,12 @@ describe('server API — merge & cookie config', () => {
         expect(c.server.set({ analytics: true })).toContain(`Max-Age=${180 * 86400};`);
     });
 
+    it('Max-Age is a whole number of seconds for fractional consentMaxAgeDays', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] }, consentMaxAgeDays: 1.1 });
+        expect(c.server.set({ analytics: true })).toContain('Max-Age=95040;');
+        expect(parseSetCookie(c.server.set({ analytics: true })).options.maxAge).toBe(95040);
+    });
+
     it('explicit cookie.maxAgeSec wins over consentMaxAgeDays', () => {
         const c = createConsentify({
             policy: { categories: ['analytics'] },
@@ -2626,20 +2632,28 @@ describe('consent record v2', () => {
         expect(fromDocument()).toMatchObject({ v: 2, src: 'preferences', choices: { analytics: true, marketing: true } });
     });
 
-    it('rejects records with an invalid src, non-string id, pv or lang, or an unknown v', () => {
+    it('rejects records with a non-string id, pv, lang or src, or an unknown v', () => {
         const c = createConsentify({ policy: { categories: cats } });
         const base = { v: 2, ...v1Record(c.policy.identifier) };
         const read = (o: object) => c.get({ cookieHeader: `consentify=${enc(o)}` }).decision;
         expect(read({ ...base, id: '0a1b2c3d4e5f', pv: '1', lang: 'en', src: 'banner' })).toBe('decided');
         expect(read({ ...base, id: 42 })).toBe('unset');
         expect(read({ ...base, id: null })).toBe('unset');
-        expect(read({ ...base, src: 'popup' })).toBe('unset');
+        expect(read({ ...base, src: 5 })).toBe('unset');
         expect(read({ ...base, src: null })).toBe('unset');
         expect(read({ ...base, pv: 3 })).toBe('unset');
         expect(read({ ...base, pv: null })).toBe('unset');
         expect(read({ ...base, lang: ['en'] })).toBe('unset');
         expect(read({ ...base, v: 3 })).toBe('unset');
         expect(read({ ...base, v: '2' })).toBe('unset');
+    });
+
+    it('reads a record whose src is a source this version does not know (a later 3.x minor)', () => {
+        const c = createConsentify({ policy: { categories: cats } });
+        const stored = { v: 2, id: '0a1b2c3d4e5f', ...v1Record(c.policy.identifier), src: 'import' };
+        expect(c.get({ cookieHeader: `consentify=${enc(stored)}` })).toEqual({ decision: 'decided', snapshot: stored });
+        setCookie('consentify', enc(stored));
+        expect(createConsentify({ policy: { categories: cats } }).get()).toEqual({ decision: 'decided', snapshot: stored });
     });
 
     it('untyped callers cannot write a record that the next read rejects', () => {
@@ -2950,6 +2964,7 @@ describe('Cloud mode (Mode B)', () => {
     it('accepts a v2 SiteConfig and exposes its data fields on consent.cloud.config', async () => {
         const cfg = {
             v: 2, categories: ['analytics'], policyIdentifier: 'v1', policyTextVersion: '2026-10-01',
+            mode: 'opt-in' as const, consentMaxAgeDays: 182.5,
             locales: ['en', 'de'], defaultLocale: 'en', vendors: VENDORS, futureField: { x: 1 },
         };
         stubConfigFetch(cfg);
@@ -3002,6 +3017,15 @@ describe('Cloud mode (Mode B)', () => {
             { policyTextVersion: 20261001 },
             { v: 3 },
             { policyIdentifier: '' },
+            { categories: ['analytics', ''] },
+            { categories: ['analytics', 7] },
+            { categories: [null] },
+            { mode: 'opt-maybe' },
+            { mode: null },
+            { consentMaxAgeDays: 0 },
+            { consentMaxAgeDays: -30 },
+            { consentMaxAgeDays: '365' },
+            { consentMaxAgeDays: null }, // what JSON makes of Infinity / NaN
         ];
         for (const extra of bad) {
             vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(new Response(JSON.stringify(
@@ -3013,14 +3037,16 @@ describe('Cloud mode (Mode B)', () => {
         expect(readCache()).toBeNull();
     });
 
-    it('ignores a cached SiteConfig with malformed vendors', async () => {
-        localStorage.setItem(CACHE_KEY, JSON.stringify({
-            t: Date.now(), h: 'h0', c: { categories: ['analytics'], policyIdentifier: 'v0', vendors: [{ id: 1 }] },
-        }));
-        stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
-        const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
-        expect(c.cloud.source).toBe('network');
-        expect(c.policy.identifier).toBe('v1');
+    it('ignores a cached SiteConfig with malformed vendors, categories, mode or consentMaxAgeDays', async () => {
+        for (const extra of [{ vendors: [{ id: 1 }] }, { categories: [''] }, { mode: 'gdpr' }, { consentMaxAgeDays: 0 }]) {
+            localStorage.setItem(CACHE_KEY, JSON.stringify({
+                t: Date.now(), h: 'h0', c: { categories: ['analytics'], policyIdentifier: 'v0', ...extra },
+            }));
+            stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' }, 'h1');
+            const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
+            expect(c.cloud.source, JSON.stringify(extra)).toBe('network');
+            expect(c.policy.identifier).toBe('v1');
+        }
     });
 
     it('caches the fetched SiteConfig with its hash in localStorage', async () => {

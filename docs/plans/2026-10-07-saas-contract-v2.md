@@ -112,11 +112,11 @@ The SDK exports these types from `@consentify/core/cloud` (`SiteConfig`, `Vendor
 | Field | Type | Required | SDK behavior | SaaS rules |
 |-------|------|----------|--------------|------------|
 | `v` | `2` | SHOULD be sent | Absent or `2` is accepted; any other value makes the config invalid | Always publish `2` |
-| `categories` | `string[]` | yes | Become the instance's categories. `necessary` is implicit and always granted | Unique, non-empty strings; MUST NOT contain `necessary`. Adding or removing a category MUST come with a new `policyIdentifier` (see below) |
+| `categories` | `string[]` | yes | Become the instance's categories. `necessary` is implicit and always granted. Every element must be a non-empty string | Unique, non-empty strings; MUST NOT contain `necessary`. Adding or removing a category MUST come with a new `policyIdentifier` (see below) |
 | `policyIdentifier` | non-empty `string` | yes | Stored in every record as `record.policy`. A stored record with a different value is ignored and the visitor is asked again | Change it for material policy changes and whenever `categories` change; otherwise keep it, since a change re-prompts every visitor. Short (it is stored in a cookie): a date (`"2026-10-01"`) or a semver works |
 | `policyTextVersion` | `string` | no | Recorded on every new decision as `record.pv`. Changing it does not invalidate existing consent | Bump on wording or translation changes that are not material. Short |
-| `mode` | `'opt-in' \| 'opt-out'` | no (default `opt-in`) | A local `mode` in the integrator's init wins | MUST be one of the two values (the SDK does not check it) |
-| `consentMaxAgeDays` | `number` | no | Records older than this are expired: the visitor is asked again. A local value wins | Positive integer (the SDK does not check it) |
+| `mode` | `'opt-in' \| 'opt-out'` | no (default `opt-in`) | A local `mode` in the integrator's init wins. Any other value makes the config invalid | MUST be one of the two values |
+| `consentMaxAgeDays` | `number` | no | Records older than this are expired: the visitor is asked again. A local value wins. Anything but a finite number greater than 0 makes the config invalid | Positive integer |
 | `locales` | `string[]` | no | Data only: validated, cached, exposed as `consent.cloud.config.locales` | BCP 47 tags |
 | `defaultLocale` | `string` | no | Data only | SHOULD be one of `locales` |
 | `vendors` | `Vendor[]` | no | Data only: the SDK attaches no consent logic to vendors | `id` unique per site; `category` one of `categories` or `necessary`; `privacyPolicyUrl` an absolute `https:` URL |
@@ -130,14 +130,16 @@ Additional fields are allowed. The SDK passes the whole object through unchanged
 The SDK treats a SiteConfig as invalid, and falls back to its cache or the integrator's `fallback`, when any of these holds:
 
 - the body is not a JSON object;
-- `categories` is not an array;
+- `categories` is not an array, or an element is not a string or is `""`;
 - `policyIdentifier` is missing, not a string, or `""`;
+- `mode` is present and not `'opt-in'` or `'opt-out'`;
+- `consentMaxAgeDays` is present and not a finite number greater than 0;
 - `v` is present and not `2`;
 - `policyTextVersion` or `defaultLocale` is present and not a string (`null` included);
 - `locales` is present and not an array of strings;
 - `vendors` is present and not an array of objects whose `id`, `category` and `name` are strings and whose `privacyPolicyUrl`, when present, is a string.
 
-Not checked by the SDK, so the SaaS MUST validate them before publishing: element types and uniqueness of `categories`, absence of `necessary`, `mode`, `consentMaxAgeDays`, vendor `category` values, URL formats. Cached copies are validated with the same rules.
+Not checked by the SDK, so the SaaS MUST validate them before publishing: uniqueness of `categories`, absence of `necessary`, `consentMaxAgeDays` being an integer, vendor `category` values, URL formats. Cached copies are validated with the same rules.
 
 ### 3.4 Versioning
 
@@ -268,7 +270,7 @@ Notes:
 
 - `record.givenAt` comes from the visitor's device clock (browser events) or the integrator's server clock (server events). The ingest SHOULD store its own `receivedAt` and use it for ordering and retention.
 - `record.choices` holds every category of the policy at decision time plus `"necessary": true`.
-- The ingest MUST ignore unknown fields in the event and in `record` (store them or drop them, but do not reject). New optional fields may appear in later SDK minor versions without a change of `v`.
+- The ingest MUST ignore unknown fields in the event and in `record` (store them or drop them, but do not reject). New optional fields, and new `record.src` values, may appear in later SDK minor versions without a change of `v`.
 - Validation the ingest SHOULD apply, answering `400` on failure: `v === 2`; `eventId` a string of 1 to 64 characters; `siteId` matches the key; `action` one of the three values; `record` an object with a non-empty string `policy`, a parseable `givenAt`, a `choices` object of booleans, `v` absent or `2`, and `id` absent or a string of at most 64 characters; `visitorHash`, when present, a string of at most 256 characters; `sdkVersion` a string; `proof` only with a server key (rule 4 above).
 
 ### 4.5 Responses and retries

@@ -240,14 +240,17 @@ export interface CachedSiteConfig { t: number; h: string; c: SiteConfig }
 export const CONFIG_CACHE_PREFIX = 'consentify_cfg_';
 
 const isStr = (x: unknown): x is string => typeof x === 'string';
+const isNonEmptyStr = (x: unknown): boolean => isStr(x) && x !== '';
 const optStr = (x: unknown): boolean => x === undefined || isStr(x);
 const optArr = <T>(x: T[] | undefined, ok: (i: T) => boolean): boolean =>
     x === undefined || (Array.isArray(x) && x.every(ok));
 
 // Light shape check; a wrong type anywhere makes the whole config malformed.
 const isSiteConfig = (c?: Partial<SiteConfig> | null): c is SiteConfig =>
-    !!c && Array.isArray(c.categories) && !!c.policyIdentifier && isStr(c.policyIdentifier) &&
+    !!c && Array.isArray(c.categories) && c.categories.every(isNonEmptyStr) && isNonEmptyStr(c.policyIdentifier) &&
     (c.v === undefined || c.v === 2) && optStr(c.policyTextVersion) && optStr(c.defaultLocale) &&
+    (c.mode === undefined || c.mode === 'opt-in' || c.mode === 'opt-out') &&
+    (c.consentMaxAgeDays === undefined || (Number.isFinite(c.consentMaxAgeDays) && c.consentMaxAgeDays > 0)) &&
     optArr(c.locales, isStr) &&
     optArr(c.vendors, x => !!x && isStr(x.id) && isStr(x.category) && isStr(x.name) && optStr(x.privacyPolicyUrl));
 

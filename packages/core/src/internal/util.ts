@@ -66,7 +66,7 @@ export function hashPolicy(categories: readonly string[], identifier?: string): 
     return fnv1a(stableStringify({ categories: [...categories].sort(), identifier: identifier ?? null}));
 }
 
-/** Valid `ConsentSource` values. */
+/** `ConsentSource` values a write stores. */
 export const SOURCES: readonly unknown[] = ['banner', 'preferences', 'api'];
 
 // Accepts v1 records (no `v`) and v2 records (`v: 2`, optional string `id` and metadata).
@@ -80,8 +80,9 @@ export function isValidSnapshot<T extends UserCategory>(s: unknown): s is Snapsh
     if (Number.isNaN(Date.parse((s as { givenAt: string }).givenAt))) return false;
     const r = s as Record<string, unknown>;
     if (r.v !== undefined && r.v !== 2) return false;
-    if ([r.id, r.pv, r.lang].some(x => x !== undefined && typeof x !== 'string')) return false;
-    if (r.src !== undefined && !SOURCES.includes(r.src)) return false;
+    // Any string `src` is read, so a source added by a later 3.x minor does not
+    // unset the record here; writes still drop unknown sources (`SOURCES`).
+    if ([r.id, r.pv, r.lang, r.src].some(x => x !== undefined && typeof x !== 'string')) return false;
     const choices = (s as { choices: Record<string, unknown> }).choices;
     for (const k in choices) {
         if (typeof choices[k] !== 'boolean') return false;

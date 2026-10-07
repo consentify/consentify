@@ -55,7 +55,7 @@ export interface Snapshot<T extends UserCategory> {
     pv?: string;
     /** Language of the consent UI. */
     lang?: string;
-    /** UI that recorded the decision. */
+    /** UI that recorded the decision. Records written by a later version may carry a source this one does not know. */
     src?: ConsentSource;
 }
 

@@ -16,6 +16,7 @@ import type {
     ConsentProof,
     ConsentState,
     Necessary,
+    ServerOptions,
     Snapshot,
     StorageKind,
     VisitorIdSource,
@@ -28,7 +29,7 @@ import {
     writeCookie,
     type CookieOpt,
 } from './internal/cookie';
-import { buildProofFnv1a, buildProofHmac } from './internal/crypto';
+import { buildProofHmac } from './internal/crypto';
 import { resolveVisitorId } from './internal/visitor';
 import {
     MS_PER_DAY,
@@ -55,6 +56,7 @@ export type {
     ConsentProof,
     ConsentState,
     Necessary,
+    ServerOptions,
     Snapshot,
     StorageKind,
     UserCategory,
@@ -113,8 +115,9 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
     /**
      * HMAC-SHA256 signing secret for consent proofs. Server-only — passing this
      * value in a browser context throws ConsentifyConfigError because the secret
-     * would be visible to end users. When set, `getProof()` returns a Promise.
-     * When omitted, a non-cryptographic FNV1a signature is used (deprecated).
+     * would be visible to end users. When set, the instance gets an async
+     * `getProof()` and `adapter.save()` receives a `proof`. Without it there is
+     * no proof API.
      */
     secret?: string;
     /**
@@ -135,10 +138,11 @@ export interface CreateConsentifyInit<Cs extends readonly string[]> {
 // --- Public instance shapes -------------------------------------------------
 
 /**
- * Members shared by both sync (FNV1a) and async (HMAC) instance variants.
- * Only `getProof` differs between them.
+ * Instance returned by `createConsentify` (no `secret`). The flat methods run
+ * against the browser store; pass a {@link ServerOptions} object as the last
+ * argument to run them against a request `Cookie` header instead.
  */
-interface ConsentifyInstanceShared<Cs extends readonly string[]> {
+export interface ConsentifyInstance<Cs extends readonly string[]> {
     readonly policy: { readonly categories: Cs; readonly identifier: string };
     readonly mode: ConsentMode;
     readonly server: {
@@ -147,11 +151,7 @@ interface ConsentifyInstanceShared<Cs extends readonly string[]> {
         clear: () => string;
     };
     readonly client: {
-        get: {
-            (): ConsentState<ArrToUnion<Cs>>;
-            /** @deprecated Use `isGranted(category)` or `consent.client` pattern with `get()` + manual check. Slated for removal in v3. */
-            (category: Necessary | ArrToUnion<Cs>): boolean;
-        };
+        get: () => ConsentState<ArrToUnion<Cs>>;
         set: (choices: Partial<Choices<ArrToUnion<Cs>>>) => void;
         clear: () => void;
         subscribe: (callback: () => void) => () => void;
@@ -162,27 +162,27 @@ interface ConsentifyInstanceShared<Cs extends readonly string[]> {
             onRevoke?: () => void,
         ) => () => void;
     };
-    readonly get: {
-        (): ConsentState<ArrToUnion<Cs>>;
-        (cookieHeader: string): ConsentState<ArrToUnion<Cs>>;
-        (cookieHeader: null): ConsentState<ArrToUnion<Cs>>;
-    };
-    readonly isGranted: (category: Necessary | ArrToUnion<Cs>) => boolean;
+    /** Client state, or the state in `opts.cookieHeader` (server). */
+    readonly get: (opts?: ServerOptions) => ConsentState<ArrToUnion<Cs>>;
+    /** Whether `category` is granted. Unset consent follows `mode` (opt-out grants). */
+    readonly isGranted: (category: Necessary | ArrToUnion<Cs>, opts?: ServerOptions) => boolean;
     readonly set: {
         (choices: Partial<Choices<ArrToUnion<Cs>>>): void;
-        (choices: Partial<Choices<ArrToUnion<Cs>>>, cookieHeader: string): string;
+        /** Server: merges into the consent in `opts.cookieHeader`, returns a `Set-Cookie` header. */
+        (choices: Partial<Choices<ArrToUnion<Cs>>>, opts: ServerOptions): string;
     };
     readonly clear: {
         (): void;
-        (cookieHeader: string): string;
+        /** Server: returns a clearing (`Max-Age=0`) `Set-Cookie` header. */
+        (opts: ServerOptions): string;
     };
     readonly acceptAll: {
         (): void;
-        (cookieHeader: string): string;
+        (opts: ServerOptions): string;
     };
     readonly rejectAll: {
         (): void;
-        (cookieHeader: string): string;
+        (opts: ServerOptions): string;
     };
     readonly subscribe: (callback: () => void) => () => void;
     readonly getServerSnapshot: () => ConsentState<ArrToUnion<Cs>>;
@@ -208,50 +208,27 @@ interface ConsentifyInstanceShared<Cs extends readonly string[]> {
 }
 
 /**
- * Instance returned by `createConsentify` when `secret` is absent (the
- * default). `getProof()` is synchronous and uses the FNV1a fallback signature.
- *
- * @remarks The FNV1a fallback is **deprecated** because its signature is not
- * cryptographically secure and can be forged. For real audit trails, pass a
- * server-side `secret` to `createConsentify` — this returns a
- * {@link ConsentifyAsyncInstance} whose `getProof()` is HMAC-SHA256 signed.
- * A one-time runtime warning is emitted the first time `getProof()` is called
- * on an instance without a `secret`.
- */
-export interface ConsentifyInstance<Cs extends readonly string[]>
-    extends ConsentifyInstanceShared<Cs> {
-    readonly getProof: {
-        /** @deprecated Unsigned FNV1a proof is forgeable. Pass `secret` to createConsentify for HMAC-SHA256 signing. */
-        (): ConsentProof<ArrToUnion<Cs>> | null;
-        /** @deprecated Unsigned FNV1a proof is forgeable. Pass `secret` to createConsentify for HMAC-SHA256 signing. */
-        (cookieHeader: string): ConsentProof<ArrToUnion<Cs>> | null;
-    };
-}
-
-/**
- * Instance returned by `createConsentify` when `secret` is provided. All
- * proof-related methods are async (HMAC-SHA256).
+ * Instance returned by `createConsentify` when `secret` is provided
+ * (server-only). Adds HMAC-SHA256 signed `getProof()`.
  */
 export interface ConsentifyAsyncInstance<Cs extends readonly string[]>
-    extends ConsentifyInstanceShared<Cs> {
-    readonly getProof: {
-        (): Promise<ConsentProof<ArrToUnion<Cs>> | null>;
-        (cookieHeader: string): Promise<ConsentProof<ArrToUnion<Cs>> | null>;
-    };
+    extends ConsentifyInstance<Cs> {
+    /** Signed proof of the client state, or of the consent in `opts.cookieHeader`. `null` when unset. */
+    readonly getProof: (opts?: ServerOptions) => Promise<ConsentProof<ArrToUnion<Cs>> | null>;
 }
 
 // --- Factory (self-hosted; cloud mode is in `@consentify/core/cloud`) -----
 /**
  * Self-hosted mode with HMAC-SHA256 proofs: `secret` is set. Returns an
- * instance whose `getProof()` is async. Server-only — passing `secret` in a
+ * instance with an async `getProof()`. Server-only — passing `secret` in a
  * browser context throws `ConsentifyConfigError`.
  */
 export function createConsentify<Cs extends readonly string[]>(
     init: CreateConsentifyInit<Cs> & { secret: string; siteId?: never },
 ): ConsentifyAsyncInstance<Cs>;
 /**
- * Self-hosted mode (default): synchronous factory. `getProof()` uses the
- * deprecated FNV1a fallback.
+ * Self-hosted mode (default). No proof API; pass `secret` on the server for
+ * signed proofs.
  */
 export function createConsentify<Cs extends readonly string[]>(
     init: CreateConsentifyInit<Cs> & { siteId?: never },
@@ -368,7 +345,7 @@ export function createConsentify<Cs extends readonly string[]>(
 
     // ---- server API
     const server = {
-        get: (cookieHeader: string | null | undefined): ConsentState<T> => {
+        get: (cookieHeader?: string | null): ConsentState<T> => {
             const raw = cookieHeader ? readCookie(cookieName, cookieHeader) : null;
             const s = raw ? dec<Snapshot<T>>(raw) : null;
             if (!s || !isValidSnapshot<T>(s) || s.policy !== policyHash || isExpired(s.givenAt)) return { decision: 'unset' };
@@ -376,9 +353,9 @@ export function createConsentify<Cs extends readonly string[]>(
         },
         set: (
             choices: Partial<Choices<T>>,
-            currentCookieHeader?: string
+            currentCookieHeader?: string | null
         ): string => {
-            const prev = currentCookieHeader ? server.get(currentCookieHeader) : { decision: 'unset' as const };
+            const prev = server.get(currentCookieHeader);
             const base = prev.decision === 'decided' ? prev.snapshot.choices : normalize();
             const snapshot: Snapshot<T> = {
                 policy: policyHash,
@@ -523,11 +500,10 @@ export function createConsentify<Cs extends readonly string[]>(
         if (!adapter) return;
         void (async () => {
             try {
-                const visitorId = await getVisitorId();
-                const proof = secret
-                    ? await buildProofHmac(snapshot, secret)
-                    : buildProofFnv1a(snapshot);
-                await adapter.save({ visitorId, snapshot, proof });
+                const data: { visitorId: string; snapshot: Snapshot<T>; proof?: ConsentProof<T> } =
+                    { visitorId: await getVisitorId(), snapshot };
+                if (secret) data.proof = await buildProofHmac(snapshot, secret);
+                await adapter.save(data);
             } catch (err) {
                 logW('adapter.save failed:', err);
             }
@@ -558,18 +534,19 @@ export function createConsentify<Cs extends readonly string[]>(
         })();
     }
 
-    // ---- client API
-    function clientGet(): ConsentState<T>;
-    function clientGet(category: Necessary | T): boolean;
-    function clientGet(category?: Necessary | T): ConsentState<T> | boolean {
-        if (typeof category === 'undefined') return cachedState;
-        if (category === 'necessary') return true;
-        if (cachedState.decision === 'decided') return !!cachedState.snapshot.choices[category];
-        return mode === 'opt-out';
-    }
+    // ---- flat API mode switch: any options object means server mode
+    const isServer = (opts: unknown): opts is ServerOptions => typeof opts === 'object' && opts !== null;
+    const stateFor = (opts?: ServerOptions): ConsentState<T> =>
+        isServer(opts) ? server.get(opts.cookieHeader) : cachedState;
+    const isGranted = (category: Necessary | T, opts?: ServerOptions): boolean => {
+        const state = stateFor(opts);
+        return category === 'necessary' ||
+            (state.decision === 'decided' ? !!state.snapshot.choices[category] : mode === 'opt-out');
+    };
 
+    // ---- client API
     const client = {
-        get: clientGet,
+        get: (): ConsentState<T> => cachedState,
 
         // An explicit set() is always a new decision: even identical choices
         // are re-written with a fresh `givenAt` (matches `server.set`).
@@ -620,7 +597,7 @@ export function createConsentify<Cs extends readonly string[]>(
             let granted = false;
 
             const tick = () => {
-                if (clientGet(category) === granted) return;
+                if (isGranted(category) === granted) return;
                 granted = !granted;
                 if (!granted) return onRevoke!();
                 if (!onRevoke) unsub();
@@ -634,54 +611,9 @@ export function createConsentify<Cs extends readonly string[]>(
         },
     };
 
-    // --- Flat top-level API (overloaded for precise return types) ---
-    function flatGet(): ConsentState<T>;
-    function flatGet(cookieHeader: string): ConsentState<T>;
-    function flatGet(cookieHeader: null): ConsentState<T>;
-    function flatGet(cookieHeader?: string | null): ConsentState<T> {
-        return typeof cookieHeader === 'string'
-            ? server.get(cookieHeader)
-            : client.get();
-    }
-
-    function flatSet(choices: Partial<Choices<T>>): void;
-    function flatSet(choices: Partial<Choices<T>>, cookieHeader: string): string;
-    function flatSet(choices: Partial<Choices<T>>, cookieHeader?: string): string | void {
-        if (typeof cookieHeader === 'string') return server.set(choices, cookieHeader);
-        client.set(choices);
-    }
-
-    function flatClear(): void;
-    function flatClear(serverMode: string): string;
-    function flatClear(serverMode?: string): string | void {
-        if (typeof serverMode === 'string') return server.clear();
-        client.clear();
-    }
-
-    function flatBulkSet(grant: boolean, cookieHeader?: string): string | void {
-        if (typeof cookieHeader === 'string') return server.set(allChoices(grant), cookieHeader);
-        client.set(allChoices(grant));
-    }
-
-    function flatAcceptAll(): void;
-    function flatAcceptAll(cookieHeader: string): string;
-    function flatAcceptAll(cookieHeader?: string): string | void { return flatBulkSet(true, cookieHeader); }
-
-    function flatRejectAll(): void;
-    function flatRejectAll(cookieHeader: string): string;
-    function flatRejectAll(cookieHeader?: string): string | void { return flatBulkSet(false, cookieHeader); }
-
-    type ProofResult = ConsentProof<T> | null;
-    let unsignedProofWarned = false;
-    function flatGetProof(cookieHeader?: string): ProofResult | Promise<ProofResult> {
-        const state = typeof cookieHeader === 'string' ? server.get(cookieHeader) : cachedState;
-        if (state.decision !== 'decided') return secret ? Promise.resolve(null) : null;
-        if (!secret && !unsignedProofWarned) {
-            unsignedProofWarned = true;
-            logW('getProof: FNV1a fallback, pass `secret` for HMAC');
-        }
-        return secret ? buildProofHmac(state.snapshot, secret) : buildProofFnv1a(state.snapshot);
-    }
+    // --- Flat top-level API (the overloads live on ConsentifyInstance) ---
+    const flatSet = (choices: Partial<Choices<T>>, opts?: ServerOptions): string | void =>
+        isServer(opts) ? server.set(choices, opts.cookieHeader) : client.set(choices);
 
     const instance = {
         policy: {
@@ -692,13 +624,12 @@ export function createConsentify<Cs extends readonly string[]>(
         server,
         client,
 
-        get: flatGet,
-        isGranted: (category: Necessary | T): boolean => clientGet(category),
+        get: stateFor,
+        isGranted,
         set: flatSet,
-        clear: flatClear,
-        acceptAll: flatAcceptAll,
-        rejectAll: flatRejectAll,
-        getProof: flatGetProof,
+        clear: (opts?: ServerOptions): string | void => isServer(opts) ? server.clear() : client.clear(),
+        acceptAll: (opts?: ServerOptions) => flatSet(allChoices(true), opts),
+        rejectAll: (opts?: ServerOptions) => flatSet(allChoices(false), opts),
         subscribe: client.subscribe,
         getServerSnapshot: client.getServerSnapshot,
         guard: client.guard,
@@ -706,7 +637,15 @@ export function createConsentify<Cs extends readonly string[]>(
         once,
         destroy,
     };
-    return instance as unknown as ConsentifyInstance<Cs> | ConsentifyAsyncInstance<Cs>;
+    if (!secret) return instance as unknown as ConsentifyInstance<Cs>;
+    // Proofs need a server-side secret: an unsigned hash would be forgeable.
+    return {
+        ...instance,
+        getProof: (opts?: ServerOptions): Promise<ConsentProof<T> | null> => {
+            const state = stateFor(opts);
+            return state.decision === 'decided' ? buildProofHmac(state.snapshot, secret) : Promise.resolve(null);
+        },
+    } as unknown as ConsentifyAsyncInstance<Cs>;
 }
 
 // Common predefined category names you can reuse in your policy.

@@ -112,26 +112,27 @@ function useConsent() {
 
 ## Server-Side Usage
 
-The server API works with raw `Cookie` headers — perfect for Next.js, Remix, or any Node.js framework:
+The server API works with raw `Cookie` headers — perfect for Next.js, Remix, or any Node.js framework. Pass `{ cookieHeader }` as the last argument to switch a flat method to server mode; a missing or `null` header means no consent yet:
 
 ```ts
-// Read consent from request
-const state = consent.server.get(request.headers.get('cookie'));
+const cookieHeader = request.headers.get('cookie');
 
-if (state.decision === 'decided' && state.snapshot.choices.analytics) {
-  // User consented to analytics
+// Read consent from request
+const state = consent.get({ cookieHeader });
+
+if (consent.isGranted('analytics', { cookieHeader })) {
+  // User consented to analytics (opt-out mode: also true while unset)
 }
 
 // Set consent (returns Set-Cookie header string)
-const setCookieHeader = consent.server.set(
-  { analytics: true },
-  request.headers.get('cookie')
-);
-response.headers.set('Set-Cookie', setCookieHeader);
+const setCookieHeader = consent.set({ analytics: true }, { cookieHeader });
+response.headers.append('Set-Cookie', setCookieHeader);
 
-// Clear consent
-const clearHeader = consent.server.clear();
+// Clear consent (returns a Max-Age=0 Set-Cookie header)
+const clearHeader = consent.clear({});
 ```
+
+`consent.server.get(cookieHeader)`, `consent.server.set(choices, cookieHeader?)` and `consent.server.clear()` remain as the low-level equivalents.
 
 ### Next.js App Router Example
 
@@ -149,7 +150,7 @@ import { consent } from '@/lib/consent';
 
 export default async function RootLayout({ children }) {
   const cookieStore = await cookies();
-  const state = consent.server.get(cookieStore.toString());
+  const state = consent.get({ cookieHeader: cookieStore.toString() });
   
   return (
     <html>
@@ -215,11 +216,11 @@ Full method list: [API reference](https://github.com/consentify/consentify/blob/
 
 ### `createConsentify(options)`
 
-Returns a flat instance plus `policy`, `client`, and `server`. Call `isGranted`, `acceptAll`, `rejectAll`, and `getProof` on the instance. `client.get(category)` is deprecated — use `isGranted`.
+Returns a flat instance plus `policy`, `client`, and `server`. Call `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` on the instance; pass `{ cookieHeader }` as the last argument for server mode. With a server-side `secret` the instance also has `getProof`.
 
 #### `client` (browser)
 
-The browser store used with `useSyncExternalStore`. `acceptAll`, `rejectAll`, and `getProof` are not on `client`.
+The browser store used with `useSyncExternalStore`. `isGranted`, `acceptAll`, `rejectAll`, and `getProof` are not on `client`.
 
 | Method | Description |
 |--------|-------------|
@@ -286,28 +287,22 @@ ccpa.isGranted('analytics'); // true (until user opts out)
 
 ### Consent Proof (Audit Trail)
 
-```ts
-consent.set({ analytics: true, marketing: false });
-
-const proof = consent.getProof();
-// { policy: '...', givenAt: '2026-...', choices: {...}, signature: '...' }
-
-// Server-side
-const proof = consent.getProof(cookieHeader);
-```
-
-**Signed vs unsigned.** Pass a `secret` to enable tamper-evident HMAC-SHA256 signatures (recommended for any compliance use case). In signed mode, `getProof()` returns `Promise<ConsentProof<T> | null>`.
+Proofs are HMAC-SHA256 signed and server-only: pass a `secret` (which throws `ConsentifyConfigError` in a browser) and the instance gets an async `getProof()`. Instances without a `secret` have no `getProof`.
 
 ```ts
+// server code only
 const consent = createConsentify({
   policy: { categories: ['analytics'] as const },
-  secret: process.env.CONSENT_SIGNING_SECRET,
+  secret: process.env.CONSENT_SIGNING_SECRET!,
 });
 
-const proof = await consent.getProof();
+const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie') });
+// { policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null
+
+await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true
 ```
 
-Without a `secret`, `getProof()` falls back to a non-cryptographic FNV1a hash. This path is **forgeable**, emits a one-time `console.warn`, and is slated to return `null` in a future major release. Only use it for local debugging.
+With a `secret`, `adapter.save()` also receives the signed `proof`; without one it gets only `{ visitorId, snapshot }`.
 
 ### Expiration Warning
 

@@ -21,7 +21,7 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 | `mode` | `'opt-in' \| 'opt-out'` | `'opt-in'` | GDPR opt-in (deny by default) or CCPA opt-out (grant by default) |
 | `expirationWarningDays` | `number` | `30` | Days before expiry to emit `'expiring'` event |
 | `storage` | `StorageKind[]` | `['cookie']` | Client storage priority (`'cookie'`, `'localStorage'`) |
-| `secret` | `string` | — | Enables HMAC-SHA256 signed `getProof()`. Highly recommended |
+| `secret` | `string` | — | Server-only. Adds an async, HMAC-SHA256 signed `getProof()` and passes a signed `proof` to `adapter.save()`. Throws `ConsentifyConfigError` in a browser |
 | `visitorId` | `string \| () => string \| Promise<string>` | auto | Stable visitor ID for adapters / cloud mode |
 | `adapter` | `ConsentAdapter<T>` | — | Custom persistence backend |
 
@@ -29,21 +29,23 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 
 ## Flat API (primary)
 
+Without a trailing argument the flat methods use the browser store. Passing a `ServerOptions` object, `{ cookieHeader?: string | null }`, switches them to server mode: they read the given `Cookie` header and return `Set-Cookie` strings instead of writing anything. Any object counts, so `clear({})` is server mode; a missing, empty or `null` `cookieHeader` means no consent yet.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `get` | `() => ConsentState<T>` | Current consent state (client-side) |
-| `get` | `(cookieHeader: string) => ConsentState<T>` | Read consent from a `Cookie` header (server-side) |
-| `isGranted` | `(category: string) => boolean` | Check a single category (client-side) |
+| `get` | `(opts: ServerOptions) => ConsentState<T>` | Read consent from `opts.cookieHeader` (server-side) |
+| `isGranted` | `(category) => boolean` | Check a single category (client-side). Unset consent follows `mode`: `false` for opt-in, `true` for opt-out |
+| `isGranted` | `(category, opts: ServerOptions) => boolean` | Same check against `opts.cookieHeader` (server-side) |
 | `set` | `(choices: Partial<Choices<T>>) => void` | Update consent choices (client-side) |
-| `set` | `(choices: Partial<Choices<T>>, cookieHeader: string) => string` | Returns a `Set-Cookie` header string (server-side) |
+| `set` | `(choices: Partial<Choices<T>>, opts: ServerOptions) => string` | Merges into the consent in `opts.cookieHeader`, returns a `Set-Cookie` header (server-side) |
 | `clear` | `() => void` | Clear all consent data (client-side) |
-| `clear` | `(serverMode: string) => string` | Returns a clearing `Set-Cookie` header (server-side) |
+| `clear` | `(opts: ServerOptions) => string` | Returns a clearing (`Max-Age=0`) `Set-Cookie` header (server-side) |
 | `acceptAll` | `() => void` | Grant all user categories (client-side) |
-| `acceptAll` | `(cookieHeader: string) => string` | Grant all, returns `Set-Cookie` header (server-side) |
+| `acceptAll` | `(opts: ServerOptions) => string` | Grant all, returns `Set-Cookie` header (server-side) |
 | `rejectAll` | `() => void` | Deny all user categories; necessary stays `true` (client-side) |
-| `rejectAll` | `(cookieHeader: string) => string` | Deny all, returns `Set-Cookie` header (server-side) |
-| `getProof` | `() => ConsentProof<T> \| null` | Tamper-evident consent receipt for audit trails |
-| `getProof` | `(cookieHeader: string) => ConsentProof<T> \| null` | Server-side consent proof |
+| `rejectAll` | `(opts: ServerOptions) => string` | Deny all, returns `Set-Cookie` header (server-side) |
+| `getProof` | `(opts?: ServerOptions) => Promise<ConsentProof<T> \| null>` | Only on instances created with `secret` (server-only). HMAC-SHA256 signed consent receipt; see [Consent Proof](#consent-proof-audit-trail) |
 | `guard` | `(category, onGrant, onRevoke?) => () => void` | Run code when consent is granted; optionally handle revocation. Returns a dispose function. With `onRevoke`, the guard re-arms after each revoke (grant → `onGrant`, revoke → `onRevoke`, repeated) until disposed. Without `onRevoke`, `onGrant` runs once and the guard stops watching |
 | `subscribe` | `(cb: () => void) => () => void` | Subscribe to changes (React-compatible) |
 | `getServerSnapshot` | `() => ConsentState<T>` | Always returns `{ decision: 'unset' }` for SSR |
@@ -53,15 +55,14 @@ Returns a consent instance with flat top-level methods and `server`/`client` nam
 
 ## Server / Client Namespaces (advanced)
 
-The `server` and `client` namespaces are still available for direct access:
+The `server` and `client` namespaces are still available as the low-level explicit API:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `server.get` | `(cookieHeader: string \| null \| undefined) => ConsentState<T>` | Read consent from a `Cookie` header |
 | `server.set` | `(choices: Partial<Choices<T>>, currentCookieHeader?: string) => string` | Returns a `Set-Cookie` header string |
 | `server.clear` | `() => string` | Returns a clearing `Set-Cookie` header |
-| `client.get` | `() => ConsentState<T>` | Current consent state |
-| `client.get` | `(category: string) => boolean` | Check a single category. **Deprecated in v2.5 — use `isGranted(category)`. Slated for removal in v3.** |
+| `client.get` | `() => ConsentState<T>` | Current consent state. Use `isGranted(category)` for a single category |
 | `client.set` | `(choices: Partial<Choices<T>>) => void` | Update consent choices |
 | `client.clear` | `() => void` | Clear all consent data |
 | `client.guard` | `(category, onGrant, onRevoke?) => () => void` | Guard with dispose |
@@ -77,7 +78,7 @@ import { cookies } from 'next/headers';
 import { parseSetCookie } from '@consentify/core';
 
 const cookieStore = await cookies();
-const { name, value, options } = parseSetCookie(consent.acceptAll(cookieStore.toString()));
+const { name, value, options } = parseSetCookie(consent.acceptAll({ cookieHeader: cookieStore.toString() }));
 cookieStore.set(name, value, options);
 ```
 
@@ -174,34 +175,27 @@ Convenience methods that set all user categories at once:
 consent.acceptAll();  // All categories true
 consent.rejectAll();  // All categories false (necessary stays true)
 
-// Server-side
-const header = consent.acceptAll(cookieHeader);
+// Server-side: pass the request's Cookie header, get a Set-Cookie header back
+const header = consent.acceptAll({ cookieHeader });
 ```
 
 ## Consent Proof (Audit Trail)
 
-Get a tamper-evident consent receipt for compliance records:
+Tamper-evident consent receipts are HMAC-SHA256 signed and server-only. Create an instance with a `secret` in server code (it throws `ConsentifyConfigError` in a browser, where the secret would leak); that instance has an async `getProof()`. Instances without a `secret` have no `getProof` at all, because an unsigned receipt could be forged by anyone.
 
 ```ts
-const proof = consent.getProof();
-// { policy: '...', givenAt: '2026-...', choices: {...}, signature: 'a1b2...' }
+// server code only
+import { createConsentify, verifyProof } from '@consentify/core';
 
-// Server-side
-const proof = consent.getProof(cookieHeader);
-```
-
-### Signed vs unsigned
-
-- When `createConsentify({ secret })` is provided, `getProof()` returns an HMAC-SHA256 signature. **This is the recommended path for any compliance use case.** `getProof()` becomes async in this mode (returns `Promise<ConsentProof<T> | null>`).
-- Without a `secret`, `getProof()` falls back to a non-cryptographic FNV1a hash. This path is **forgeable** and is only suitable for local debugging. It emits a one-time `console.warn` when used. The unsigned return type is marked `@deprecated` and will return `null` in a future major release.
-
-```ts
 const consent = createConsentify({
   policy: { categories: ['analytics'] as const },
-  secret: process.env.CONSENT_SIGNING_SECRET, // recommended
+  secret: process.env.CONSENT_SIGNING_SECRET!,
 });
 
-const proof = await consent.getProof();
+const proof = await consent.getProof({ cookieHeader: request.headers.get('cookie') });
+// { policy: '...', givenAt: '2026-...', choices: {...}, signature: '<64 hex chars>' } or null when unset
+
+await verifyProof(proof!, process.env.CONSENT_SIGNING_SECRET!); // true; false if any field was altered
 ```
 
 ## Consent Mode (opt-in / opt-out)
@@ -328,6 +322,25 @@ Script-tag users switch from `dist/consentify.iife.min.js` to `dist/consentify-c
 
 > **Note:** The separate `@consentify/cloud` package is deprecated as of `v2.0.0` and is a no-op. Remove it from your `package.json` and use `createCloudConsentify({ siteId, apiKey })` from `@consentify/core/cloud`.
 
+### Migrating to v3: server API and proofs
+
+Server mode is now selected by an options object instead of a bare string, the unsigned proof fallback is gone, and `client.get(category)` is removed:
+
+| v2 | v3 |
+|----|----|
+| `consent.get(cookieHeader)` | `consent.get({ cookieHeader })` |
+| `consent.get(null)` | `consent.get()` (client) or `consent.get({ cookieHeader: null })` (server) |
+| — | `consent.isGranted('analytics', { cookieHeader })` (server; follows `mode` when unset) |
+| `consent.set(choices, cookieHeader)` | `consent.set(choices, { cookieHeader })` |
+| `consent.clear('anything')` | `consent.clear({})` |
+| `consent.acceptAll(cookieHeader)` / `consent.rejectAll(cookieHeader)` | `consent.acceptAll({ cookieHeader })` / `consent.rejectAll({ cookieHeader })` |
+| `consent.getProof()` without `secret` (FNV1a, forgeable) | Removed. Create a server instance with `secret` and call `await consent.getProof({ cookieHeader })` |
+| `consent.getProof(cookieHeader)` with `secret` | `await consent.getProof({ cookieHeader })` |
+| `consent.client.get('analytics')` | `consent.isGranted('analytics')` |
+| `adapter.save({ visitorId, snapshot, proof })`, `proof` always set | `proof` is optional: present only when the instance has a `secret` |
+
+`cookieHeader` may be a string, `null` or missing, so `request.headers.get('cookie')` can be passed as is. The `consent.server.*` namespace keeps its v2 signatures.
+
 ## Custom Adapters
 
 Implement `ConsentAdapter<T>` to persist consent to your own backend:
@@ -339,6 +352,7 @@ type Cats = 'analytics' | 'marketing';
 
 const dbAdapter: ConsentAdapter<Cats> = {
   async save({ visitorId, snapshot, proof }) {
+    // `proof` is only set when the instance was created with a `secret` (server side)
     await db.consent.upsert({ visitorId, snapshot, proof });
   },
   async load(visitorId) {

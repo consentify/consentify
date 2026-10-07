@@ -257,10 +257,10 @@ describe('client API', () => {
         expect(c.client.get()).toEqual({ decision: 'unset' });
     });
 
-    it('get(category) returns boolean', () => {
+    it('isGranted(category) returns boolean', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        expect(c.client.get('necessary')).toBe(true);
-        expect(c.client.get('analytics')).toBe(false);
+        expect(c.isGranted('necessary')).toBe(true);
+        expect(c.isGranted('analytics')).toBe(false);
     });
 
     it('set() stores and reads back', () => {
@@ -403,7 +403,7 @@ describe('client set() re-affirmation', () => {
         vi.setSystemTime(t0 + 31 * DAY);
         const reloaded = createConsentify(opts);
         expect(reloaded.client.get().decision).toBe('decided');
-        expect(reloaded.client.get('analytics')).toBe(true);
+        expect(reloaded.isGranted('analytics')).toBe(true);
     });
 });
 
@@ -436,7 +436,7 @@ describe('storage fallback', () => {
         // Should not throw
         expect(() => c.client.set({ analytics: true })).not.toThrow();
         // Consent should be readable via the client API (cookie mirror worked)
-        expect(c.client.get('analytics')).toBe(true);
+        expect(c.isGranted('analytics')).toBe(true);
         spy.mockRestore();
         window.localStorage.setItem = orig;
     });
@@ -666,7 +666,7 @@ describe('unified top-level API', () => {
         expect(c.get().decision).toBe('decided');
     });
 
-    it('get(cookieHeader) delegates to server.get()', () => {
+    it('get({ cookieHeader }) delegates to server.get()', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         const snapshot = {
             policy: c.policy.identifier,
@@ -674,18 +674,26 @@ describe('unified top-level API', () => {
             choices: { necessary: true, analytics: true },
         };
         const header = `consentify=${enc(snapshot)}`;
-        const state = c.get(header);
+        const state = c.get({ cookieHeader: header });
         expect(state.decision).toBe('decided');
     });
 
-    it('get(null) falls through to client.get()', () => {
+    it('get({}) with a missing, empty or null header is server-side unset', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        expect(c.get(null)).toEqual({ decision: 'unset' });
+        c.client.set({ analytics: true });
+        expect(c.get().decision).toBe('decided');
+        // Server mode never reads the browser store.
+        expect(c.get({})).toEqual({ decision: 'unset' });
+        expect(c.get({ cookieHeader: '' })).toEqual({ decision: 'unset' });
+        expect(c.get({ cookieHeader: null })).toEqual({ decision: 'unset' });
     });
 
-    it('get("") delegates to server.get() and returns unset', () => {
+    it('a non-object argument is not server mode', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        expect(c.get('')).toEqual({ decision: 'unset' });
+        c.client.set({ analytics: true });
+        // v2 call shapes from untyped code fall through to the client store.
+        expect((c.get as (x: unknown) => unknown)('consentify=x')).toBe(c.client.get());
+        expect((c.get as (x: unknown) => unknown)(null)).toBe(c.client.get());
     });
 
     it('isGranted("analytics") returns correct boolean', () => {
@@ -702,15 +710,28 @@ describe('unified top-level API', () => {
 
     it('set(choices) delegates to client.set()', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        c.set({ analytics: true });
-        expect(c.client.get('analytics')).toBe(true);
+        expect(c.set({ analytics: true })).toBeUndefined();
+        expect(c.isGranted('analytics')).toBe(true);
     });
 
-    it('set(choices, cookieHeader) returns Set-Cookie string', () => {
+    it('set(choices, {}) returns Set-Cookie string', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const result = c.set({ analytics: true }, '');
+        const result = c.set({ analytics: true }, {});
         expect(typeof result).toBe('string');
         expect(result).toContain('consentify=');
+        // Server mode does not touch the browser store.
+        expect(c.get()).toEqual({ decision: 'unset' });
+    });
+
+    it('set(choices, { cookieHeader }) merges into the existing cookie', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
+        const first = c.set({ analytics: true }, { cookieHeader: null });
+        const cookieHeader = first.split(';')[0];
+        const second = c.set({ marketing: true }, { cookieHeader });
+        const state = c.get({ cookieHeader: second.split(';')[0] });
+        expect(state.decision === 'decided' && state.snapshot.choices).toEqual({
+            necessary: true, analytics: true, marketing: true,
+        });
     });
 
     it('clear() delegates to client.clear()', () => {
@@ -721,11 +742,31 @@ describe('unified top-level API', () => {
         expect(c.get()).toEqual({ decision: 'unset' });
     });
 
-    it('clear(cookieHeader) returns clearing header', () => {
+    it('clear({}) returns a Max-Age=0 header and leaves the client store alone', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const result = c.clear('somecookie=value');
+        c.client.set({ analytics: true });
+        const result = c.clear({});
         expect(typeof result).toBe('string');
+        expect(result).toContain('consentify=;');
         expect(result).toContain('Max-Age=0');
+        expect(c.get().decision).toBe('decided');
+    });
+
+    it('isGranted(category, { cookieHeader }) reads the header (opt-in)', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const } });
+        const cookieHeader = c.set({ analytics: true }, {}).split(';')[0];
+        expect(c.isGranted('analytics', { cookieHeader })).toBe(true);
+        expect(c.isGranted('marketing', { cookieHeader })).toBe(false);
+        expect(c.isGranted('analytics', {})).toBe(false);
+        expect(c.isGranted('necessary', {})).toBe(true);
+    });
+
+    it('isGranted(category, { cookieHeader }) follows opt-out when unset', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const }, mode: 'opt-out' });
+        expect(c.isGranted('analytics', { cookieHeader: null })).toBe(true);
+        expect(c.isGranted('analytics', { cookieHeader: 'other=1' })).toBe(true);
+        const cookieHeader = c.set({ analytics: false }, {}).split(';')[0];
+        expect(c.isGranted('analytics', { cookieHeader })).toBe(false);
     });
 
     it('subscribe(cb) works at top level', () => {
@@ -1168,8 +1209,8 @@ describe('server API — merge & cookie config', () => {
 
     it('clear() returns the same header regardless of input', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const result1 = c.clear('foo=bar');
-        const result2 = c.clear('baz=qux');
+        const result1 = c.clear({ cookieHeader: 'foo=bar' });
+        const result2 = c.clear({ cookieHeader: 'baz=qux' });
         expect(result1).toBe(result2);
     });
 
@@ -1226,23 +1267,23 @@ describe('parseSetCookie', () => {
 
     it('round-trips set() output with custom cookie config', () => {
         const c = mk();
-        const header = c.set({ analytics: true }, '');
+        const header = c.set({ analytics: true }, {});
         const { name, value, options } = parseSetCookie(header);
         expect(name).toBe('cc');
         expect(value).toBe(decodeURIComponent(header.slice(3, header.indexOf(';'))));
         expect(options).toEqual({ path: '/app', maxAge: 3600, domain: '.example.com', sameSite: 'strict', secure: true });
-        expect(c.get(`${name}=${encodeURIComponent(value)}`).decision).toBe('decided');
+        expect(c.get({ cookieHeader: `${name}=${encodeURIComponent(value)}` }).decision).toBe('decided');
     });
 
     it('clear() header yields maxAge 0 and an empty value', () => {
-        const { name, value, options } = parseSetCookie(mk().clear(''));
+        const { name, value, options } = parseSetCookie(mk().clear({}));
         expect(name).toBe('cc');
         expect(value).toBe('');
         expect(options.maxAge).toBe(0);
     });
 
     it('returns the URI-decoded value', () => {
-        const { value } = parseSetCookie(mk().set({ analytics: false }, ''));
+        const { value } = parseSetCookie(mk().set({ analytics: false }, {}));
         expect(value).toMatch(/^\{/);
         expect(JSON.parse(value).choices.analytics).toBe(false);
     });
@@ -1289,7 +1330,7 @@ describe('multi-tab sync (BroadcastChannel)', () => {
 
         c1.client.set({ analytics: true });
 
-        expect(c2.client.get('analytics')).toBe(true);
+        expect(c2.isGranted('analytics')).toBe(true);
     });
 
     it('clear() in one instance notifies listeners in another', () => {
@@ -1624,16 +1665,16 @@ describe('acceptAll / rejectAll', () => {
         }
     });
 
-    it('acceptAll with cookieHeader returns Set-Cookie string', () => {
+    it('acceptAll({ cookieHeader }) returns Set-Cookie string', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const header = c.acceptAll('');
+        const header = c.acceptAll({ cookieHeader: '' });
         expect(typeof header).toBe('string');
         expect(header).toContain('consentify=');
     });
 
-    it('rejectAll with cookieHeader returns Set-Cookie string', () => {
+    it('rejectAll({}) returns Set-Cookie string', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const header = c.rejectAll('');
+        const header = c.rejectAll({});
         expect(typeof header).toBe('string');
         expect(header).toContain('consentify=');
     });
@@ -1663,69 +1704,17 @@ describe('acceptAll / rejectAll', () => {
 });
 
 // ============================================================
-// getProof
+// getProof (secret-only)
 // ============================================================
 describe('getProof', () => {
     afterEach(() => { clearAllCookies(); vi.unstubAllGlobals(); });
 
-    it('returns null when no consent given', () => {
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        expect(c.getProof()).toBeNull();
-    });
-
-    it('returns proof with correct fields when decided', () => {
+    it('does not exist on an instance without a secret', () => {
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         c.set({ analytics: true });
-        const proof = c.getProof();
-        expect(proof).not.toBeNull();
-        expect(proof!.policy).toBe(c.policy.identifier);
-        expect(proof!.givenAt).toBeTruthy();
-        expect(proof!.choices.analytics).toBe(true);
-        expect(proof!.choices.necessary).toBe(true);
-        expect(typeof proof!.signature).toBe('string');
-        expect(proof!.signature.length).toBe(8);
-    });
-
-    it('signature is deterministic', () => {
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        c.set({ analytics: true });
-        const p1 = c.getProof()!;
-        const p2 = c.getProof()!;
-        expect(p1.signature).toBe(p2.signature);
-    });
-
-    it('signature changes when choices differ', () => {
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        c.set({ analytics: true });
-        const sig1 = c.getProof()!.signature;
-        c.set({ analytics: false });
-        const sig2 = c.getProof()!.signature;
-        expect(sig1).not.toBe(sig2);
-    });
-
-    it('server mode: getProof(cookieHeader) parses from header', () => {
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const header = c.set({ analytics: true }, '');
-        const cookiePart = header.split(';')[0];
-        const proof = c.getProof(cookiePart);
-        expect(proof).not.toBeNull();
-        expect(proof!.choices.analytics).toBe(true);
-    });
-
-    it('signature can be verified externally', () => {
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        c.set({ analytics: true });
-        const proof = c.getProof()!;
-        const body = { policy: proof.policy, givenAt: proof.givenAt, choices: proof.choices };
-        expect(fnv1a(stableStringify(body))).toBe(proof.signature);
-    });
-
-    it('returns null after clear()', () => {
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        c.set({ analytics: true });
-        expect(c.getProof()).not.toBeNull();
-        c.clear();
-        expect(c.getProof()).toBeNull();
+        expect('getProof' in c).toBe(false);
+        // @ts-expect-error - getProof is only typed on the secret instance
+        expect(c.getProof).toBeUndefined();
     });
 });
 
@@ -1802,7 +1791,7 @@ describe('consent mode (opt-in / opt-out)', () => {
 
     it('opt-out mode: partial server set from empty header keeps untouched categories granted', () => {
         const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const }, mode: 'opt-out' });
-        for (const header of [c.set({ analytics: false }, ''), c.server.set({ analytics: false })]) {
+        for (const header of [c.set({ analytics: false }, {}), c.server.set({ analytics: false })]) {
             const s = c.server.get(setHeaderToCookieHeader(header));
             if (s.decision !== 'decided') throw new Error('expected decided');
             expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: true });
@@ -1814,7 +1803,7 @@ describe('consent mode (opt-in / opt-out)', () => {
         c.set({ analytics: true });
         expect(c.isGranted('analytics')).toBe(true);
         expect(c.isGranted('marketing')).toBe(false);
-        const s = c.server.get(setHeaderToCookieHeader(c.set({ analytics: true }, '')));
+        const s = c.server.get(setHeaderToCookieHeader(c.set({ analytics: true }, {})));
         if (s.decision !== 'decided') throw new Error('expected decided');
         expect(s.snapshot.choices).toEqual({ necessary: true, analytics: true, marketing: false });
     });
@@ -1825,7 +1814,7 @@ describe('consent mode (opt-in / opt-out)', () => {
         expect(c.isGranted('analytics')).toBe(false);
         expect(c.isGranted('marketing')).toBe(false);
         expect(c.isGranted('necessary')).toBe(true);
-        const s = c.server.get(setHeaderToCookieHeader(c.rejectAll('')));
+        const s = c.server.get(setHeaderToCookieHeader(c.rejectAll({})));
         if (s.decision !== 'decided') throw new Error('expected decided');
         expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: false });
     });
@@ -1936,9 +1925,6 @@ describe('expiring event', () => {
             expirationWarningDays: 10,
         });
         expect(c.get().decision).toBe('decided');
-        // The consent is near expiry. Verify getProof works (consent is valid but expiring).
-        const proof = c.getProof();
-        expect(proof).not.toBeNull();
     });
 
     it('does NOT fire for expired consent (daysRemaining <= 0)', () => {
@@ -1975,7 +1961,7 @@ describe('ConsentAdapter integration', () => {
         return adapter;
     };
 
-    it('calls adapter.save after client.set with snapshot + proof', async () => {
+    it('calls adapter.save after client.set with a snapshot and no proof (no secret)', async () => {
         const adapter = makeAdapter();
         const c = createConsentify({
             policy: { categories: ['analytics'] as const },
@@ -1986,7 +1972,25 @@ describe('ConsentAdapter integration', () => {
         await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
         expect(adapter._saved[0].visitorId).toBe('visitor-1');
         expect(adapter._saved[0].snapshot.choices.analytics).toBe(true);
-        expect(adapter._saved[0].proof.signature).toBeTypeOf('string');
+        expect('proof' in adapter._saved[0]).toBe(false);
+    });
+
+    it('passes an HMAC proof to adapter.save when the instance has a secret', async () => {
+        const adapter = makeAdapter();
+        await withSimulatedServer(async () => {
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+                adapter,
+                visitorId: 'visitor-1',
+            });
+            c.client.set({ analytics: true });
+            await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
+        });
+        const { proof, snapshot } = adapter._saved[0];
+        expect(proof.choices).toEqual(snapshot.choices);
+        expect(proof.signature.length).toBe(64);
+        expect(await verifyProof(proof, 'dev-secret')).toBe(true);
     });
 
     it('hydrates from adapter.load when local state is unset', async () => {
@@ -2188,48 +2192,6 @@ describe('HMAC-SHA256 proof', () => {
         }).toThrow(ConsentifyConfigError);
     });
 
-    it('warns once when getProof() is called without a secret', () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        c.set({ analytics: true });
-        c.getProof();
-        c.getProof();
-        c.getProof();
-        const unsignedWarnings = warn.mock.calls.filter(
-            args => typeof args[0] === 'string' && args[0].includes('FNV1a fallback'),
-        );
-        expect(unsignedWarnings.length).toBe(1);
-    });
-
-    it('does not warn when getProof() returns null (no decision)', () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        const proof = c.getProof();
-        expect(proof).toBeNull();
-        const unsignedWarnings = warn.mock.calls.filter(
-            args => typeof args[0] === 'string' && args[0].includes('FNV1a fallback'),
-        );
-        expect(unsignedWarnings.length).toBe(0);
-    });
-
-    it('does not warn when secret is provided (server)', async () => {
-        await withSimulatedServer(async () => {
-            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-            const c = createConsentify({
-                policy: { categories: ['analytics'] as const },
-                secret: 'dev-secret',
-            });
-            const cookieHeader = setHeaderToCookieHeader(
-                c.set({ analytics: true }, 'consentify=' + enc({})),
-            );
-            await c.getProof(cookieHeader);
-            const unsignedWarnings = warn.mock.calls.filter(
-                args => typeof args[0] === 'string' && args[0].includes('FNV1a fallback'),
-            );
-            expect(unsignedWarnings.length).toBe(0);
-        });
-    });
-
     it('getProof returns a Promise<ConsentProof> when secret is set (server)', async () => {
         await withSimulatedServer(async () => {
             const c = createConsentify({
@@ -2237,14 +2199,27 @@ describe('HMAC-SHA256 proof', () => {
                 secret: 'dev-secret',
             });
             const cookieHeader = setHeaderToCookieHeader(
-                c.set({ analytics: true }, 'consentify=' + enc({})),
+                c.set({ analytics: true }, { cookieHeader: 'consentify=' + enc({}) }),
             );
-            const proofPromise = c.getProof(cookieHeader);
+            const proofPromise = c.getProof({ cookieHeader });
             expect(proofPromise).toBeInstanceOf(Promise);
             const proof = await proofPromise;
             expect(proof).not.toBeNull();
             expect(proof!.signature).toBeTypeOf('string');
             expect(proof!.signature.length).toBe(64);
+            expect(proof!.choices.analytics).toBe(true);
+        });
+    });
+
+    it('getProof() resolves to null when there is no decision', async () => {
+        await withSimulatedServer(async () => {
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+            });
+            expect(await c.getProof()).toBeNull();
+            expect(await c.getProof({})).toBeNull();
+            expect(await c.getProof({ cookieHeader: 'other=1' })).toBeNull();
         });
     });
 
@@ -2255,9 +2230,9 @@ describe('HMAC-SHA256 proof', () => {
                 secret: 'dev-secret',
             });
             const cookieHeader = setHeaderToCookieHeader(
-                c.set({ analytics: true }, 'consentify=' + enc({})),
+                c.set({ analytics: true }, { cookieHeader: 'consentify=' + enc({}) }),
             );
-            const proof = await c.getProof(cookieHeader);
+            const proof = await c.getProof({ cookieHeader });
             expect(await verifyProof(proof!, 'dev-secret')).toBe(true);
         });
     });
@@ -2269,9 +2244,9 @@ describe('HMAC-SHA256 proof', () => {
                 secret: 'dev-secret',
             });
             const cookieHeader = setHeaderToCookieHeader(
-                c.set({ analytics: true }, 'consentify=' + enc({})),
+                c.set({ analytics: true }, { cookieHeader: 'consentify=' + enc({}) }),
             );
-            const proof = await c.getProof(cookieHeader);
+            const proof = await c.getProof({ cookieHeader });
             expect(await verifyProof(proof!, 'wrong-secret')).toBe(false);
         });
     });
@@ -2283,9 +2258,9 @@ describe('HMAC-SHA256 proof', () => {
                 secret: 'dev-secret',
             });
             const cookieHeader = setHeaderToCookieHeader(
-                c.set({ analytics: true }, 'consentify=' + enc({})),
+                c.set({ analytics: true }, { cookieHeader: 'consentify=' + enc({}) }),
             );
-            const proof = await c.getProof(cookieHeader);
+            const proof = await c.getProof({ cookieHeader });
             const tampered: ConsentProof<'analytics'> = { ...proof!, choices: { ...proof!.choices, analytics: false } };
             expect(await verifyProof(tampered, 'dev-secret')).toBe(false);
         });

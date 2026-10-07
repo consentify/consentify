@@ -107,8 +107,8 @@ For SvelteKit SSR, initialize the consent state server-side via the server API:
 import { consent } from '$lib/consent';
 
 export async function load({ request }) {
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const state = consent.get(cookieHeader);
+  const cookieHeader = request.headers.get('cookie');
+  const state = consent.get({ cookieHeader });
   return { consentState: state };
 }
 ```

@@ -1171,6 +1171,50 @@ describe('server API — merge & cookie config', () => {
         const result2 = c.clear('baz=qux');
         expect(result1).toBe(result2);
     });
+
+    it('Max-Age follows consentMaxAgeDays when maxAgeSec is unset', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] }, consentMaxAgeDays: 180 });
+        expect(c.server.set({ analytics: true })).toContain(`Max-Age=${180 * 86400};`);
+    });
+
+    it('explicit cookie.maxAgeSec wins over consentMaxAgeDays', () => {
+        const c = createConsentify({
+            policy: { categories: ['analytics'] },
+            consentMaxAgeDays: 180,
+            cookie: { maxAgeSec: 3600 },
+        });
+        expect(c.server.set({ analytics: true })).toContain('Max-Age=3600;');
+    });
+
+    it('Max-Age defaults to one year when neither option is set', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] } });
+        expect(c.server.set({ analytics: true })).toContain('Max-Age=31536000;');
+    });
+
+    it('partitioned: true adds Partitioned and forces Secure', () => {
+        const c = createConsentify({
+            policy: { categories: ['analytics'] },
+            cookie: { partitioned: true, secure: false },
+        });
+        const header = c.server.set({ analytics: true });
+        expect(header).toContain('; Secure');
+        expect(header).toContain('; Partitioned');
+    });
+
+    it('clear() header carries Partitioned when partitioned is set', () => {
+        const c = createConsentify({
+            policy: { categories: ['analytics'] },
+            cookie: { partitioned: true },
+        });
+        const header = c.server.clear();
+        expect(header).toContain('Max-Age=0');
+        expect(header).toContain('; Partitioned');
+    });
+
+    it('omits Partitioned by default', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] } });
+        expect(c.server.set({ analytics: true })).not.toContain('Partitioned');
+    });
 });
 
 // ============================================================

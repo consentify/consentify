@@ -338,9 +338,10 @@ describe('client API', () => {
     });
 });
 
-describe('client set() re-affirmation', () => {
+describe('set() re-affirmation and restore', () => {
     const DAY = 24 * 60 * 60 * 1000;
     const givenAt = (s: ConsentState<string>) => (s.decision === 'decided' ? s.snapshot.givenAt : null);
+    const fromHeader = (h: string) => JSON.parse(decodeURIComponent(h.split(';')[0].slice('consentify='.length)));
 
     beforeEach(() => {
         clearAllCookies();
@@ -352,11 +353,11 @@ describe('client set() re-affirmation', () => {
         clearAllCookies();
     });
 
-    it('identical choices refresh givenAt, persist it, notify and emit change', () => {
+    it('identical choices with a source refresh givenAt and id, persist them, notify and emit change', () => {
         const t0 = Date.now();
         vi.setSystemTime(t0);
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
-        c.client.set({ analytics: true });
+        c.client.set({ analytics: true }, { source: 'banner' });
         const first = c.client.get();
 
         vi.setSystemTime(t0 + 60_000);
@@ -364,11 +365,13 @@ describe('client set() re-affirmation', () => {
         const handler = vi.fn();
         c.client.subscribe(listener);
         c.on('change', handler);
-        c.client.set({ analytics: true });
+        c.client.set({ analytics: true }, { source: 'preferences' });
         const second = c.client.get();
 
         expect(givenAt(first)).toBe(new Date(t0).toISOString());
         expect(givenAt(second)).toBe(new Date(t0 + 60_000).toISOString());
+        expect(second.decision === 'decided' && second.snapshot.id)
+            .not.toBe(first.decision === 'decided' && first.snapshot.id);
         expect(listener).toHaveBeenCalledTimes(1);
         expect(handler).toHaveBeenCalledOnce();
         expect(handler.mock.calls[0][0].from).toBe(first);
@@ -377,27 +380,27 @@ describe('client set() re-affirmation', () => {
         expect(createConsentify({ policy: { categories: ['analytics'] as const } }).client.get()).toEqual(second);
     });
 
-    it('acceptAll() twice records two decisions', () => {
+    it('acceptAll({ source }) twice records two decisions', () => {
         const t0 = Date.now();
         vi.setSystemTime(t0);
         const c = createConsentify({ policy: { categories: ['analytics'] as const } });
         const handler = vi.fn();
         c.on('change', handler);
-        c.acceptAll();
+        c.acceptAll({ source: 'banner' });
         vi.setSystemTime(t0 + 1000);
-        c.acceptAll();
+        c.acceptAll({ source: 'banner' });
         expect(handler).toHaveBeenCalledTimes(2);
         expect(givenAt(c.get())).toBe(new Date(t0 + 1000).toISOString());
     });
 
-    it('identical choices extend expiration when consentMaxAgeDays is set', () => {
+    it('identical choices with a source extend expiration when consentMaxAgeDays is set', () => {
         const opts = { policy: { categories: ['analytics'] as const }, consentMaxAgeDays: 30 };
         const t0 = Date.now();
         vi.setSystemTime(t0);
-        createConsentify(opts).client.set({ analytics: true });
+        createConsentify(opts).client.set({ analytics: true }, { source: 'banner' });
 
         vi.setSystemTime(t0 + 25 * DAY);
-        createConsentify(opts).client.set({ analytics: true });
+        createConsentify(opts).client.set({ analytics: true }, { source: 'preferences' });
 
         // 31 days after the original decision it would have expired; the
         // re-affirmation 25 days in restarted the 30-day window.
@@ -405,6 +408,84 @@ describe('client set() re-affirmation', () => {
         const reloaded = createConsentify(opts);
         expect(reloaded.client.get().decision).toBe('decided');
         expect(reloaded.isGranted('analytics')).toBe(true);
+    });
+
+    it('identical choices without a source are a no-op: same record, no notify, events, sync or adapter save', async () => {
+        MockBroadcastChannel.channels.clear();
+        vi.stubGlobal('BroadcastChannel', MockBroadcastChannel);
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        const save = vi.fn(async () => {});
+        const init = {
+            policy: { categories: ['analytics', 'marketing'] as const },
+            consentMaxAgeDays: 30,
+            visitorId: 'visitor-1',
+            adapter: { save, async load() { return null; } },
+        };
+        const c = createConsentify(init);
+        c.set({ analytics: true }, { source: 'preferences' });
+        const first = c.get();
+        await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
+
+        const otherTab = vi.fn();
+        createConsentify(init).subscribe(otherTab);
+        const listener = vi.fn();
+        const onChange = vi.fn();
+        c.subscribe(listener);
+        c.on('change', onChange);
+        vi.setSystemTime(t0 + 25 * DAY);
+        // Restoring saved choices on load: partial and full forms, and acceptAll/rejectAll shapes.
+        c.set({ analytics: true });
+        c.set({ analytics: true, marketing: false }, { lang: 'de' });
+        c.client.set({});
+
+        expect(c.get()).toBe(first);
+        expect(createConsentify(init).get()).toEqual(first); // storage untouched
+        expect(listener).not.toHaveBeenCalled();
+        expect(onChange).not.toHaveBeenCalled();
+        expect(otherTab).not.toHaveBeenCalled();
+        await new Promise(r => setTimeout(r, 20));
+        expect(save).toHaveBeenCalledOnce();
+        // A restore does not extend consent: it still expires 30 days after the decision.
+        vi.setSystemTime(t0 + 31 * DAY);
+        expect(createConsentify(init).get().decision).toBe('unset');
+    });
+
+    it('acceptAll() / rejectAll() without a source are a no-op when nothing changes', () => {
+        const c = createConsentify({ policy: { categories: ['analytics'] as const } });
+        const onChange = vi.fn();
+        c.on('change', onChange);
+        c.acceptAll();
+        const accepted = c.get();
+        c.acceptAll();
+        expect(c.get()).toBe(accepted);
+        c.rejectAll();
+        const rejected = c.get();
+        c.rejectAll();
+        expect(c.get()).toBe(rejected);
+        expect(onChange).toHaveBeenCalledTimes(2);
+    });
+
+    it('server: identical choices without a source re-serialize the stored record unchanged', () => {
+        const t0 = Date.now();
+        vi.setSystemTime(t0);
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const, textVersion: 't1' } });
+        const first = c.set({ analytics: true }, { cookieHeader: null, source: 'banner', lang: 'en' });
+        const stored = fromHeader(first);
+        const cookieHeader = setHeaderToCookieHeader(first);
+        vi.setSystemTime(t0 + 60_000);
+        for (const header of [
+            c.set({ analytics: true }, { cookieHeader }),
+            c.set({ analytics: true, marketing: false }, { cookieHeader, lang: 'de' }),
+            c.server.set({}, cookieHeader),
+        ]) {
+            expect(header).toBe(first); // same id, givenAt and metadata
+        }
+        // With a source, or with changed choices, it is a new decision.
+        const reaffirmed = fromHeader(c.set({ analytics: true }, { cookieHeader, source: 'preferences' }));
+        expect(reaffirmed.id).not.toBe(stored.id);
+        expect(reaffirmed.givenAt).toBe(new Date(t0 + 60_000).toISOString());
+        expect(fromHeader(c.acceptAll({ cookieHeader })).id).not.toBe(stored.id);
     });
 });
 
@@ -1881,9 +1962,9 @@ describe('expiring event', () => {
         c.set({ analytics: true });
         expect(handler).toHaveBeenCalledTimes(1);
 
-        // Re-affirming the same choices is a new decision with a fresh givenAt
+        // Re-affirming the same choices from the UI is a new decision with a fresh givenAt
         vi.setSystemTime(t0 + 1000);
-        c.set({ analytics: true });
+        c.set({ analytics: true }, { source: 'preferences' });
         expect(handler).toHaveBeenCalledTimes(2);
 
         // Clear resets the dedup tracker, even for an identical givenAt
@@ -1977,24 +2058,6 @@ describe('ConsentAdapter integration', () => {
         expect(adapter._saved[0].visitorId).toBe('visitor-1');
         expect(adapter._saved[0].snapshot.choices.analytics).toBe(true);
         expect('proof' in adapter._saved[0]).toBe(false);
-    });
-
-    it('passes an HMAC proof to adapter.save when the instance has a secret', async () => {
-        const adapter = makeAdapter();
-        await withSimulatedServer(async () => {
-            const c = createConsentify({
-                policy: { categories: ['analytics'] as const },
-                secret: 'dev-secret',
-                adapter,
-                visitorId: 'visitor-1',
-            });
-            c.client.set({ analytics: true });
-            await vi.waitFor(() => expect(adapter._saved.length).toBe(1));
-        });
-        const { proof, snapshot } = adapter._saved[0];
-        expect(proof.choices).toEqual(snapshot.choices);
-        expect(proof.signature.length).toBe(64);
-        expect(await verifyProof(proof, 'dev-secret')).toBe(true);
     });
 
     it('hydrates from adapter.load when local state is unset', async () => {
@@ -2302,6 +2365,52 @@ describe('HMAC-SHA256 proof', () => {
     });
 });
 
+describe('client writes outside a browser', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it('are ignored with a warning: no shared state, events, listeners or adapter save', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const save = vi.fn(async () => {});
+        await withSimulatedServer(async () => {
+            // A module-level instance on a server, as in a Next.js route or Server Action.
+            const c = createConsentify({
+                policy: { categories: ['analytics'] as const },
+                secret: 'dev-secret',
+                visitorId: 'visitor-1',
+                adapter: { save, async load() { return null; } },
+            });
+            const listener = vi.fn();
+            const onChange = vi.fn();
+            const onClear = vi.fn();
+            c.subscribe(listener);
+            c.on('change', onChange);
+            c.on('clear', onClear);
+
+            expect(c.acceptAll({ source: 'api' })).toBeUndefined();
+            expect(warn).toHaveBeenCalledOnce();
+            expect(warn.mock.calls[0][0]).toContain('{ cookieHeader }');
+            expect(c.set({ analytics: true })).toBeUndefined();
+            expect(c.rejectAll()).toBeUndefined();
+            expect(c.clear()).toBeUndefined();
+            expect(c.client.set({ analytics: true })).toBeUndefined();
+            expect(c.client.clear()).toBeUndefined();
+            expect(warn).toHaveBeenCalledTimes(6);
+
+            // The next request must not see the previous caller's consent.
+            expect(c.get()).toEqual({ decision: 'unset' });
+            expect(c.isGranted('analytics')).toBe(false);
+            expect(await c.getProof()).toBeNull();
+            expect(listener).not.toHaveBeenCalled();
+            expect(onChange).not.toHaveBeenCalled();
+            expect(onClear).not.toHaveBeenCalled();
+            await new Promise(r => setTimeout(r, 20));
+            expect(save).not.toHaveBeenCalled();
+            // Server writes are unaffected.
+            expect(c.acceptAll({ cookieHeader: null, source: 'api' })).toContain('consentify=');
+        });
+    });
+});
+
 describe('consent record v2', () => {
     const cats = ['analytics', 'marketing'] as const;
     const v2Keys = ['choices', 'givenAt', 'id', 'policy', 'v'];
@@ -2389,7 +2498,7 @@ describe('consent record v2', () => {
         c.set({ analytics: true });
         expect('lang' in fromDocument()).toBe(false);
         document.documentElement.lang = 'de';
-        c.set({ analytics: true });
+        c.set({ marketing: true });
         expect(fromDocument().lang).toBe('de');
     });
 
@@ -2435,7 +2544,7 @@ describe('consent record v2', () => {
         });
         expect(fromHeader(c.rejectAll({ cookieHeader, source: 'api' })).src).toBe('api');
         // Merging keeps the previous choices but not the previous metadata.
-        expect('src' in fromHeader(c.set({}, { cookieHeader }))).toBe(false);
+        expect(fromHeader(c.set({ marketing: false }, { cookieHeader }))).not.toHaveProperty('src');
         expect(fromHeader(c.server.set({ analytics: true }, null, { source: 'api' })).src).toBe('api');
     });
 
@@ -3041,10 +3150,10 @@ describe('Cloud mode (Mode B)', () => {
         const c = await createCloudConsentify({ siteId: 'site_abc', endpoints: EP, fallback: FB });
         const t0 = Date.now();
         vi.setSystemTime(t0);
-        c.acceptAll();
+        c.acceptAll({ source: 'banner' });
         await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
         vi.setSystemTime(t0 + 60_000);
-        c.acceptAll();
+        c.acceptAll({ source: 'banner' });
         await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
         const [a, b] = ingestBodies(spy);
         expect(a.eventId).toBeTypeOf('string');
@@ -3129,7 +3238,7 @@ describe('Cloud mode (Mode B)', () => {
         expect(c.cloud.source).toBe('fallback');
     });
 
-    it('reports a re-affirmation of the same choices as a new event', async () => {
+    it('reports a re-affirmation of the same choices with a source as a new event', async () => {
         vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined });
         const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
         const c = await createCloudConsentify({
@@ -3139,14 +3248,30 @@ describe('Cloud mode (Mode B)', () => {
         });
         const t0 = Date.now();
         vi.setSystemTime(t0);
-        c.set({ analytics: true });
+        c.set({ analytics: true }, { source: 'banner' });
         await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
 
-        // Same choices later: a new decision with a fresh givenAt -> new POST
+        // Same choices later, from the UI: a new decision with a fresh givenAt -> new POST
         vi.setSystemTime(t0 + 60_000);
-        c.set({ analytics: true });
+        c.set({ analytics: true }, { source: 'preferences' });
         await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
         expect(JSON.parse(ingestCalls(spy)[1][1].body).action).toBe('accept_all');
+    });
+
+    it('does not report a programmatic restore of the same choices (no source)', async () => {
+        const spy = stubConfigFetch({ categories: ['analytics'], policyIdentifier: 'v1' });
+        const init = { siteId: 'site_abc', endpoints: EP, fallback: FB };
+        const c = await createCloudConsentify(init);
+        c.set({ analytics: true }, { source: 'preferences' });
+        await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
+        // Every later page load restores the user's saved choices.
+        for (let load = 0; load < 3; load++) {
+            const page = await createCloudConsentify(init);
+            page.set({ analytics: true });
+            page.acceptAll();
+        }
+        await new Promise(r => setTimeout(r, 20));
+        expect(ingestCalls(spy)).toHaveLength(1);
     });
 
     it('reports two decisions made in the same millisecond, keyed by record id', async () => {
@@ -3266,10 +3391,10 @@ describe('Cloud mode (Mode B)', () => {
         const c = await cloud();
         const t0 = Date.now();
         vi.setSystemTime(t0);
-        c.set({ analytics: false });
+        c.set({ analytics: false }, { source: 'banner' });
         await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(1));
         vi.setSystemTime(t0 + 60_000);
-        c.set({ analytics: false });
+        c.set({ analytics: false }, { source: 'banner' });
         await vi.waitFor(() => expect(ingestCalls(spy)).toHaveLength(2));
         const [a, b] = ingestBodies(spy);
         expect(b.action).toBe('reject_all');

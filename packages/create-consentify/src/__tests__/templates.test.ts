@@ -136,6 +136,12 @@ describe('generateVanillaConfig', () => {
         expect(out).not.toContain("'pending'");
     });
 
+    it.each([false, true])('shows banner buttons calling acceptAll / rejectAll with a banner source (saas=%s)', (useSaas) => {
+        const out = generateVanillaConfig(ctx({ framework: 'vanilla', useSaas }));
+        expect(out).toContain(`consent.acceptAll({ source: 'banner' })`);
+        expect(out).toContain(`consent.rejectAll({ source: 'banner' })`);
+    });
+
     it('tells enableConsentMode not to repeat the head default', () => {
         const out = generateVanillaConfig(ctx({ framework: 'vanilla', enableGcm: true }));
         expect(out).toContain(`necessary: ['security_storage']`);

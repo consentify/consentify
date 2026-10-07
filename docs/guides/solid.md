@@ -59,8 +59,8 @@ export function CookieBanner() {
         <div role="dialog" aria-label="Cookie consent" class="banner">
           <p>We use cookies to improve your experience.</p>
           <div class="actions">
-            <button onClick={() => consent.acceptAll()}>Accept All</button>
-            <button onClick={() => consent.rejectAll()}>Reject All</button>
+            <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+            <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
           </div>
         </div>
       )}
@@ -143,8 +143,8 @@ export function CookieBanner() {
       {state().decision === 'unset' && (
         <div role="dialog" aria-label="Cookie consent">
           <p>We use cookies to improve your experience.</p>
-          <button onClick={() => consent.acceptAll()}>Accept All</button>
-          <button onClick={() => consent.rejectAll()}>Reject All</button>
+          <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+          <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
         </div>
       )}
     </>

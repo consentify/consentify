@@ -218,6 +218,8 @@ Full method list: [API reference](https://github.com/consentify/consentify/blob/
 
 Returns a flat instance plus `policy`, `client`, and `server`. Call `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` on the instance; pass `{ cookieHeader }` as the last argument for server mode. With a server-side `secret` the instance also has `getProof`.
 
+Banner and preferences buttons should pass a `source` (`acceptAll({ source: 'banner' })`): a write with a `source` always records a new decision. A write without one that leaves the stored choices unchanged (for example restoring saved choices on load) is a no-op, and on the server returns a `Set-Cookie` header for the stored record as is.
+
 #### `client` (browser)
 
 The browser store used with `useSyncExternalStore`. `isGranted`, `acceptAll`, `rejectAll`, and `getProof` are not on `client`.
@@ -225,8 +227,8 @@ The browser store used with `useSyncExternalStore`. `isGranted`, `acceptAll`, `r
 | Method | Description |
 |--------|-------------|
 | `get()` | Returns `ConsentState` — `{ decision: 'decided', snapshot }` or `{ decision: 'unset' }` |
-| `set(choices)` | Merges choices and persists; notifies subscribers if changed |
-| `clear()` | Removes stored consent; notifies subscribers |
+| `set(choices, opts?)` | Merges choices and stores a new decision, then notifies subscribers. Without `opts.source`, a call that leaves the stored choices unchanged is a no-op. Ignored (with a warning) outside a browser |
+| `clear()` | Removes stored consent; notifies subscribers. Ignored (with a warning) outside a browser |
 | `subscribe(cb)` | Subscribe to changes; returns unsubscribe function |
 | `getServerSnapshot()` | Returns `{ decision: 'unset' }` for SSR hydration |
 | `guard(category, onGrant, onRevoke?)` | Runs `onGrant` when that category is granted |

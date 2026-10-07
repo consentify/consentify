@@ -43,8 +43,8 @@ export function ConsentProvider({ children }: { children: React.ReactNode }) {
                         We use cookies to improve your experience. Choose your preferences below.
                     </p>
                     <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => consent.acceptAll()}>Accept all</button>
-                        <button onClick={() => consent.rejectAll()}>Reject all</button>
+                        <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept all</button>
+                        <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject all</button>
                     </div>
                 </div>
             )}

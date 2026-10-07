@@ -35,7 +35,9 @@ ${gcmBlock}
 if (typeof window !== 'undefined') {
     const state = consent.get();
     if (state.decision === 'unset') {
-        // TODO: replace this with your consent banner UI
+        // TODO: replace this with your consent banner UI. Pass the source, e.g.
+        //   acceptButton.addEventListener('click', () => consent.acceptAll({ source: 'banner' }));
+        //   rejectButton.addEventListener('click', () => consent.rejectAll({ source: 'banner' }));
         console.info('[consentify] no decision yet - show banner');
     }
 }
@@ -57,7 +59,9 @@ ${gcmBlock}
 if (typeof window !== 'undefined') {
     const state = consent.get();
     if (state.decision === 'unset') {
-        // TODO: replace this with your consent banner UI
+        // TODO: replace this with your consent banner UI. Pass the source, e.g.
+        //   acceptButton.addEventListener('click', () => consent.acceptAll({ source: 'banner' }));
+        //   rejectButton.addEventListener('click', () => consent.rejectAll({ source: 'banner' }));
         console.info('[consentify] no decision yet - show banner');
     }
 }

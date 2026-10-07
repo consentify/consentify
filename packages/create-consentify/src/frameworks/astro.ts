@@ -35,8 +35,8 @@ export const astro: FrameworkScaffolder = {
     consent.subscribe(render);
     render();
 
-    document.querySelector('[data-consent-accept]')?.addEventListener('click', () => consent.acceptAll());
-    document.querySelector('[data-consent-reject]')?.addEventListener('click', () => consent.rejectAll());
+    document.querySelector('[data-consent-accept]')?.addEventListener('click', () => consent.acceptAll({ source: 'banner' }));
+    document.querySelector('[data-consent-reject]')?.addEventListener('click', () => consent.rejectAll({ source: 'banner' }));
 </script>
 `,
             },

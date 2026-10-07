@@ -88,10 +88,10 @@ export function CookieBanner() {
     <div role="dialog" aria-label="Cookie consent" className="fixed bottom-0 inset-x-0 p-4 bg-white shadow-lg">
       <p>We use cookies to improve your experience.</p>
       <div className="flex gap-2 mt-2">
-        <button onClick={() => consent.set({ analytics: true, marketing: true })}>
+        <button onClick={() => consent.set({ analytics: true, marketing: true }, { source: 'banner' })}>
           Accept All
         </button>
-        <button onClick={() => consent.set({ analytics: false, marketing: false })}>
+        <button onClick={() => consent.set({ analytics: false, marketing: false }, { source: 'banner' })}>
           Reject All
         </button>
       </div>
@@ -172,8 +172,8 @@ export function CookieBanner() {
   return (
     <div role="dialog" aria-label="Cookie consent">
       <button onClick={() => {
-        consent.set({ analytics: true, marketing: true }); // client-side update
-        setConsent({ analytics: true, marketing: true });   // server-side cookie
+        consent.set({ analytics: true, marketing: true }, { source: 'banner' }); // client-side update
+        setConsent({ analytics: true, marketing: true }); // server-side cookie
       }}>
         Accept All
       </button>
@@ -182,7 +182,7 @@ export function CookieBanner() {
 }
 ```
 
-In most cases, the client-side `consent.set()` is sufficient - it writes the cookie directly. The Server Action approach is useful when you need server-side validation or logging.
+In most cases, the client-side `consent.set()` is sufficient - it writes the cookie directly. The Server Action approach is useful when you need server-side validation or logging. Here the action receives the cookie the client just wrote; since its call has no `source` and the choices are the same, it re-serializes that record instead of recording a second decision.
 
 ## 6. Load scripts with guard()
 
@@ -313,8 +313,8 @@ export function CookieBanner() {
   return (
     <div role="dialog" aria-label="Cookie consent">
       <p>We use cookies to improve your experience.</p>
-      <button onClick={() => consent.acceptAll()}>Accept All</button>
-      <button onClick={() => consent.rejectAll()}>Reject All</button>
+      <button onClick={() => consent.acceptAll({ source: 'banner' })}>Accept All</button>
+      <button onClick={() => consent.rejectAll({ source: 'banner' })}>Reject All</button>
     </div>
   );
 }
@@ -332,7 +332,7 @@ import { consent } from '../lib/consent';
 
 export async function acceptAllConsent() {
   const cookieStore = await cookies();
-  const header = consent.acceptAll({ cookieHeader: cookieStore.toString() });
+  const header = consent.acceptAll({ cookieHeader: cookieStore.toString(), source: 'banner' });
   const { name, value, options } = parseSetCookie(header);
   cookieStore.set(name, value, options);
 }
@@ -416,7 +416,7 @@ export function ExpirationWarning() {
   return (
     <div role="alert">
       <p>Your consent expires in {days} days.</p>
-      <button onClick={() => { consent.acceptAll(); setDays(null); }}>Renew</button>
+      <button onClick={() => { consent.acceptAll({ source: 'banner' }); setDays(null); }}>Renew</button>
     </div>
   );
 }

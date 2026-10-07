@@ -95,11 +95,11 @@ With `onRevoke`, the guard re-arms after each revoke: a later re-grant calls `on
 import { consent } from './lib/consent';
 
 document.getElementById('accept-all')?.addEventListener('click', () => {
-  consent.acceptAll();
+  consent.acceptAll({ source: 'banner' });
 });
 
 document.getElementById('reject-all')?.addEventListener('click', () => {
-  consent.rejectAll();
+  consent.rejectAll({ source: 'banner' });
 });
 
 document.getElementById('reset')?.addEventListener('click', () => {
@@ -107,6 +107,8 @@ document.getElementById('reset')?.addEventListener('click', () => {
   window.location.reload();
 });
 ```
+
+Pass a `source` (`'banner'` or `'preferences'`) from consent UI buttons: such a write always records a new decision, even when the choices are unchanged. A write without a `source` that leaves the stored choices as they are, such as restoring saved choices on every page load, is a no-op: it does not extend consent, notify subscribers or report an event.
 
 ## React Integration
 
@@ -187,7 +189,7 @@ export async function POST(request: Request) {
 }
 ```
 
-Passing an options object with a `cookieHeader` key (`{ cookieHeader }`) switches `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` to server mode; an `undefined`, empty or `null` header means no consent yet. Objects without that key, like `{ source: 'banner' }`, stay client-side. `getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
+Passing an options object with a `cookieHeader` key (`{ cookieHeader }`) switches `get`, `isGranted`, `set`, `clear`, `acceptAll` and `rejectAll` to server mode; an `undefined`, empty or `null` header means no consent yet. Objects without that key, like `{ source: 'banner' }`, stay client-side. Client-side writes on a server are ignored with a warning, since a module-level instance is shared by every request. `getServerSnapshot()` always returns `{ decision: 'unset' }` during SSR, so hydration mismatches are impossible.
 
 ## Google Consent Mode v2
 

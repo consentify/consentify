@@ -12,10 +12,11 @@ describe('generateReactProvider', () => {
         expect(out).toContain(`import { useConsentify } from '@consentify/react';`);
     });
 
-    it.each(flavors)(`%s: wires acceptAll and rejectAll buttons (typo-resistant)`, (flavor) => {
+    it.each(flavors)(`%s: wires acceptAll and rejectAll buttons with a banner source (typo-resistant)`, (flavor) => {
         const out = generateReactProvider(flavor);
-        expect(out).toMatch(/consent\.\s*acceptAll\s*\(\s*\)/);
-        expect(out).toMatch(/consent\.\s*rejectAll\s*\(\s*\)/);
+        expect(out).toMatch(/consent\.\s*acceptAll\s*\(\s*\{\s*source:\s*'banner'\s*\}\s*\)/);
+        expect(out).toMatch(/consent\.\s*rejectAll\s*\(\s*\{\s*source:\s*'banner'\s*\}\s*\)/);
+        expect(out).not.toMatch(/(acceptAll|rejectAll)\s*\(\s*\)/);
     });
 
     it.each(flavors)(`%s: checks decision against 'unset' not 'pending'`, (flavor) => {

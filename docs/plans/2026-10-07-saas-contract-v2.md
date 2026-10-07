@@ -183,7 +183,7 @@ One event per request; there is no batching. Bodies are small (the record is coo
 
 Who sends events:
 
-- **Browser reporter**: started by `createCloudConsentify` in the browser. Sends one event per consent decision (every `set`, `acceptAll`, `rejectAll`, including a repeat of the same choices, which is a new decision with a new `id` and `givenAt`), and on page load any decided record it has not reported yet. Uses `fetch` with `keepalive: true`, so events survive page unload. Auth: `X-Consentify-Key` when the integrator configured `publicKey`.
+- **Browser reporter**: started by `createCloudConsentify` in the browser. Sends one event per consent decision, that is every `set`, `acceptAll` and `rejectAll` that writes a new record (a repeat of the same choices with a `source`, such as a banner click, is a new decision with a new `id` and `givenAt`; a repeat without a `source` keeps the stored record and sends nothing), and on page load any decided record it has not reported yet. Uses `fetch` with `keepalive: true`, so events survive page unload. Auth: `X-Consentify-Key` when the integrator configured `publicKey`.
 - **Server reporter**: `reportConsent(consent, { serverKey, setCookie | cookieHeader, visitorId?, timeoutMs? })`, called by the integrator after writing consent in server code (for example a Next.js Server Action). One call, one attempt, default timeout 3000 ms. Auth: `X-Consentify-Server-Key`. It throws in a browser, so the server key cannot be used from browser code by mistake.
 
 ### 4.2 Keys and headers
@@ -313,7 +313,7 @@ Two levels:
 
    The identity of a decision is `(siteId, record.id)`. Every record the SDK v3 writes, in the browser or on the server, has a random `id`; `givenAt` alone is not enough, because two decisions in the same millisecond (two quick writes in one browser, or two visitors) share it. Records without `id` (v1 records written by SDK 2.x) fall back to `(siteId, record.policy, record.givenAt)`. The browser dedups with the same key (`consentify_last_event` holds `{siteId}|{policy}|{id}`, or `{siteId}|{policy}|{givenAt}` for a record without `id`, so reloads do not re-report). The SaaS SHOULD store one decision per identity and merge its events: keep `proof` from the server event, `visitorHash` from whichever event has one (the browser event, when the server event has none), the channels seen, and the earliest `receivedAt`. Events with the same identity but different `choices` should not occur; keep both and flag them.
 
-A repeated decision with the same choices has a new `id` and `givenAt` and is a new decision on purpose (re-affirmation is evidence too).
+A repeat of the same choices from the consent UI (a write with a `source`) has a new `id` and `givenAt` and is a new decision on purpose (re-affirmation is evidence too). A write without a `source` that leaves the choices unchanged (an integrator restoring saved choices on every page load) keeps the stored record: the browser sends nothing, and a server write returns a `Set-Cookie` header for the same record, so a `reportConsent` for it carries the same `id` and merges into that decision.
 
 ### 4.8 Proofs
 

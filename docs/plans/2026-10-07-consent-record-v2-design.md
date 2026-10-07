@@ -56,6 +56,8 @@ This needs a change to server-mode detection. Today any non-null object as the l
 
 Metadata describes one decision. A server write merges `choices` from the existing cookie, but `pv`, `lang` and `src` come only from the current call and init, never from the previous record.
 
+A write with a `source` always produces a new record (fresh `id` and `givenAt`), even for unchanged choices: that is a re-affirmation by the user. A write without a `source` whose merged choices equal the stored record's keeps that record: in the browser nothing is written and nothing is notified or reported, and on the server the returned `Set-Cookie` re-serializes the stored record unchanged. Programmatic restores (`set(profile.choices)` on every load, `set()` in an effect that depends on consent state) therefore neither extend consent nor loop. Client writes outside a browser are ignored with a warning: on a server the instance is shared by every request.
+
 To keep untyped callers (IIFE / script-tag sites) from writing a record that the next read rejects, writes coerce `pv` and `lang` to strings and drop an unknown `source`.
 
 ### Why `how` is not stored

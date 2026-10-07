@@ -45,6 +45,7 @@ import {
     logE,
     logW,
     randomHex,
+    stableStringify,
     toISO,
 } from './internal/util';
 
@@ -338,6 +339,22 @@ export function createConsentify<Cs extends readonly string[]>(
         return s;
     };
 
+    // Record a write stores. A write without a `source` that leaves the stored
+    // choices unchanged (e.g. choices restored from a profile on every load)
+    // returns `prev` itself: nothing is re-dated, extended or reported. With a
+    // `source` (a click in the consent UI) it is always a new decision.
+    const nextRecord = (
+        prev: Snapshot<T> | null,
+        choices: Partial<Choices<T>>,
+        o?: WriteOptions,
+        docLang?: string,
+    ): Snapshot<T> => {
+        const next = normalize({ ...(prev ? prev.choices : normalize()), ...choices });
+        return prev && !o?.source && stableStringify(next) === stableStringify(prev.choices)
+            ? prev
+            : record(next, o, docLang);
+    };
+
     // --- client-side storage helpers ---
     // Unified localStorage dispatcher: op is 'r'ead / 'w'rite / 'c'lear.
     // Collapses three try/catch blocks and three log messages into one.
@@ -401,9 +418,9 @@ export function createConsentify<Cs extends readonly string[]>(
             opts?: WriteOptions,
         ): string => {
             const prev = server.get(currentCookieHeader);
-            const base = prev.decision === 'decided' ? prev.snapshot.choices : normalize();
-            // Metadata is per decision: only `opts` and init, never the previous record.
-            const encoded = enc(record(normalize({ ...base, ...choices }), opts));
+            // Metadata is per decision: only `opts` and init, never the previous
+            // record. An unchanged record is re-serialized as is (same `id`, `givenAt`).
+            const encoded = enc(nextRecord(prev.decision === 'decided' ? prev.snapshot : null, choices, opts));
             warnIfOversized(encoded);
             return buildSetCookieHeader(cookieName, encoded, cookieCfg);
         },
@@ -591,21 +608,26 @@ export function createConsentify<Cs extends readonly string[]>(
             (state.decision === 'decided' ? !!state.snapshot.choices[category] : mode === 'opt-out');
     };
 
+    // Client writes need the browser store. On a server they would change this
+    // instance's shared state for every later request, so they are ignored.
+    const noClientWrite = (): boolean => {
+        if (isBrowser()) return false;
+        logW('client write ignored outside a browser; pass { cookieHeader }');
+        return true;
+    };
+
     // ---- client API
     const client = {
         get: (): ConsentState<T> => cachedState,
 
-        // An explicit set() is always a new decision: even identical choices
-        // are re-written with a fresh `givenAt` (matches `server.set`).
+        // Same rule as `server.set`: a new decision unless the call has no
+        // `source` and the stored choices stay the same (then a no-op).
         set: (choices: Partial<Choices<T>>, opts?: WriteOptions) => {
+            if (noClientWrite()) return;
             const from = cachedState;
-            const fresh = readClient();
-            const base = fresh ? fresh.choices : normalize();
-            const next = record(
-                normalize({ ...base, ...choices }),
-                opts,
-                isBrowser() ? document.documentElement?.lang : '',
-            );
+            const prev = readClient();
+            const next = nextRecord(prev, choices, opts, document.documentElement?.lang);
+            if (next === prev) return;
             writeClientRaw(enc(next));
             setCachedSnapshot(next);
             notifyListeners();
@@ -616,6 +638,7 @@ export function createConsentify<Cs extends readonly string[]>(
         },
 
         clear: () => {
+            if (noClientWrite()) return;
             const hadConsent = cachedState.decision === 'decided';
             for (const k of new Set<StorageKind>([...storageOrder, 'cookie'])) clearStore(k);
             syncState();

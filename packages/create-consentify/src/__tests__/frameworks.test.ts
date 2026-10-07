@@ -98,6 +98,13 @@ describe('astro scaffolder', () => {
         const paths = files.map((f) => f.path);
         expect(paths).toContain('src/components/ConsentBanner.astro');
     });
+
+    it('records the banner as the source of accept / reject clicks', () => {
+        const banner = scaffolder.files(ctx({ framework: 'astro' })).find((f) => f.path.endsWith('.astro'))!;
+        expect(banner.content).toContain(`consent.acceptAll({ source: 'banner' })`);
+        expect(banner.content).toContain(`consent.rejectAll({ source: 'banner' })`);
+        expect(banner.content).not.toMatch(/(acceptAll|rejectAll)\(\)/);
+    });
 });
 
 describe('vanilla scaffolder', () => {

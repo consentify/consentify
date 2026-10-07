@@ -35,6 +35,10 @@ Without a trailing argument the flat methods use the browser store. Passing a `S
 
 `set`, `acceptAll` and `rejectAll` also take `WriteOptions`, `{ source?: ConsentSource; lang?: string }`, which are stored on the [consent record](#consent-record). On the server, combine them with the header: `acceptAll({ cookieHeader, source: 'banner' })`.
 
+A write with a `source` (a click in the banner or preferences UI) always records a new decision with a fresh `id` and `givenAt`, even when the choices are unchanged: re-affirming consent restarts `consentMaxAgeDays` and is reported again in cloud mode. A write **without** a `source` whose merged choices equal the stored record's (for example `consent.set(profile.choices)` on every page load, or a `set()` in an effect that depends on consent state) is a no-op: in the browser nothing is written, no subscriber, event, other tab or adapter is notified, and nothing is reported; on the server the returned `Set-Cookie` header carries the stored record unchanged (same `id`, `givenAt` and metadata).
+
+Client-side writes (`set`, `clear`, `acceptAll`, `rejectAll` without `cookieHeader`) are ignored outside a browser and log a warning: on a server the instance is shared by every request, so a client write would leak one visitor's consent into later requests. Use the `{ cookieHeader }` form there.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `get` | `() => ConsentState<T>` | Current consent state (client-side) |
@@ -67,8 +71,8 @@ The `server` and `client` namespaces are still available as the low-level explic
 | `server.set` | `(choices: Partial<Choices<T>>, currentCookieHeader?: string \| null, opts?: WriteOptions) => string` | Returns a `Set-Cookie` header string |
 | `server.clear` | `() => string` | Returns a clearing `Set-Cookie` header |
 | `client.get` | `() => ConsentState<T>` | Current consent state. Use `isGranted(category)` for a single category |
-| `client.set` | `(choices: Partial<Choices<T>>, opts?: WriteOptions) => void` | Update consent choices |
-| `client.clear` | `() => void` | Clear all consent data |
+| `client.set` | `(choices: Partial<Choices<T>>, opts?: WriteOptions) => void` | Update consent choices (browser only; same `source` rule as `set`) |
+| `client.clear` | `() => void` | Clear all consent data (browser only) |
 | `client.guard` | `(category, onGrant, onRevoke?) => () => void` | Guard with dispose |
 | `client.subscribe` | `(cb: () => void) => () => void` | Subscribe to changes |
 | `client.getServerSnapshot` | `() => ConsentState<T>` | Always `{ decision: 'unset' }` |
@@ -176,14 +180,15 @@ consent.on('expiring', (event) => {
 Convenience methods that set all user categories at once:
 
 ```ts
-consent.acceptAll();  // All categories true
-consent.rejectAll();  // All categories false (necessary stays true)
+// Banner buttons: record which UI the decision came from
+consent.acceptAll({ source: 'banner' });  // All categories true
+consent.rejectAll({ source: 'banner' });  // All categories false (necessary stays true)
 
-// Record which UI the decision came from
-consent.acceptAll({ source: 'banner' });
+// Without a source, a call that changes nothing is a no-op
+consent.acceptAll();
 
 // Server-side: pass the request's Cookie header, get a Set-Cookie header back
-const header = consent.acceptAll({ cookieHeader });
+const header = consent.acceptAll({ cookieHeader, source: 'banner' });
 ```
 
 ## Consent Record
@@ -513,7 +518,7 @@ const consent = createConsentify({
 });
 ```
 
-`save` is awaited on every `set()` / `acceptAll()` / `rejectAll()` and receives the full [consent record](#consent-record). `load` is called on startup to hydrate state for the current `visitorId`; without an explicit `visitorId` it is skipped until an id is stored (a first-time visitor has nothing to load). Return the snapshot as it was saved (storing it as JSON is enough): it is validated like a cookie, so optional keys must be absent or strings, not `null`.
+`save` is called for every new decision written in the browser (`set()` / `acceptAll()` / `rejectAll()`; a no-op write without a `source` saves nothing) and receives the full [consent record](#consent-record). `load` is called on startup to hydrate state for the current `visitorId`; without an explicit `visitorId` it is skipped until an id is stored (a first-time visitor has nothing to load). Return the snapshot as it was saved (storing it as JSON is enough): it is validated like a cookie, so optional keys must be absent or strings, not `null`.
 
 ## Policy Versioning
 

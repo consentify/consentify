@@ -1584,6 +1584,44 @@ describe('consent mode (opt-in / opt-out)', () => {
             analytics_storage: 'denied',
         }));
     });
+
+    it('opt-out mode: partial client set keeps untouched categories granted', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const }, mode: 'opt-out' });
+        c.set({ analytics: false });
+        const s = c.get();
+        if (s.decision !== 'decided') throw new Error('expected decided');
+        expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: true });
+    });
+
+    it('opt-out mode: partial server set from empty header keeps untouched categories granted', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const }, mode: 'opt-out' });
+        for (const header of [c.set({ analytics: false }, ''), c.server.set({ analytics: false })]) {
+            const s = c.server.get(setHeaderToCookieHeader(header));
+            if (s.decision !== 'decided') throw new Error('expected decided');
+            expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: true });
+        }
+    });
+
+    it('opt-in mode: partial set still leaves untouched categories denied', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const }, mode: 'opt-in' });
+        c.set({ analytics: true });
+        expect(c.isGranted('analytics')).toBe(true);
+        expect(c.isGranted('marketing')).toBe(false);
+        const s = c.server.get(setHeaderToCookieHeader(c.set({ analytics: true }, '')));
+        if (s.decision !== 'decided') throw new Error('expected decided');
+        expect(s.snapshot.choices).toEqual({ necessary: true, analytics: true, marketing: false });
+    });
+
+    it('opt-out mode: rejectAll still denies every category', () => {
+        const c = createConsentify({ policy: { categories: ['analytics', 'marketing'] as const }, mode: 'opt-out' });
+        c.rejectAll();
+        expect(c.isGranted('analytics')).toBe(false);
+        expect(c.isGranted('marketing')).toBe(false);
+        expect(c.isGranted('necessary')).toBe(true);
+        const s = c.server.get(setHeaderToCookieHeader(c.rejectAll('')));
+        if (s.decision !== 'decided') throw new Error('expected decided');
+        expect(s.snapshot.choices).toEqual({ necessary: true, analytics: false, marketing: false });
+    });
 });
 
 // ============================================================

@@ -1,0 +1,19 @@
+pre-commit:
+  jobs:
+    - name: biome
+      glob: "*.{js,jsx,ts,tsx,json,jsonc}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true
+
+# react's tsc and tests read core/dist, so build it before they run side by side.
+pre-push:
+  jobs:
+    - name: build core
+      run: pnpm --filter @consentify/core build
+    - group:
+        parallel: true
+        jobs:
+          - name: typecheck
+            run: pnpm -r check
+          - name: test
+            run: pnpm test

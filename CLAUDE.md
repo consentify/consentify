@@ -34,6 +34,12 @@ pnpm lint
 pnpm run size
 ```
 
+## Checks
+
+- pre-commit (lefthook): `biome check --write` on staged files, fixes restaged. pre-push: a core build, then `tsc` per package and `pnpm test` in parallel.
+- `pnpm verify` runs lint, typecheck and tests over the whole repo.
+- A failing hook is fixed at its cause. `--no-verify` and `LEFTHOOK=0` ask Roman.
+
 ## Publishing
 
 CI publishes on tags: `core-v*`, `react-v*`, `create-consentify-v*`. (`@consentify/cloud` is deprecated and no longer released on a schedule — it ships only if we need to republish the no-op shell.)

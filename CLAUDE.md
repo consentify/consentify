@@ -37,7 +37,8 @@ pnpm run size
 ## Checks
 
 - pre-commit (lefthook): `biome check --write` on staged files, fixes restaged. pre-push: a core build, then `tsc` per package and `pnpm test` in parallel.
-- `pnpm verify` runs lint, typecheck and tests over the whole repo.
+- `pnpm verify` runs lint, typecheck, tests and the bundle size check over the whole repo.
+- GitHub CI is light (decided 16. 11. 2026): `ci.yml` runs lint and types on pull requests, nothing on docs-only ones. Tests, size and e2e (`pnpm e2e`) run locally; `e2e.yml` and `codeql.yml` are `workflow_dispatch` only. `release.yml` still runs the full check on a tag.
 - A failing hook is fixed at its cause. `--no-verify` and `LEFTHOOK=0` ask Roman.
 
 ## Publishing

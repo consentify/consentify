@@ -1,10 +1,8 @@
 name: e2e
 
+# Disabled 16. 11. 2026: checks run locally (hooks, pnpm verify), GitHub CI stays light.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   e2e:

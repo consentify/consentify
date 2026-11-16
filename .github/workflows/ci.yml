@@ -1,27 +1,29 @@
 name: ci
 
+# The light check on a pull request: lint and types. Tests, size and e2e run in `pnpm verify` and the git hooks on dev01.
+# A docs-only pull request runs nothing.
 on:
   pull_request:
-  push:
-    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
-    name: test (node ${{ matrix.node }})
-    strategy:
-      matrix:
-        node: [20, 22, 24]
-      fail-fast: false
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node }}
-      - uses: pnpm/action-setup@v6
-      - run: pnpm install
-      - run: pnpm -r build
-      - run: pnpm -r check
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      - run: pnpm test
-      - run: pnpm size
+      - run: pnpm typecheck

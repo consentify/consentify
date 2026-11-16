@@ -1,7 +1,8 @@
 packages:
   - 'packages/*'
 
-# pnpm 10 blocks dependency lifecycle scripts by default; esbuild's postinstall
-# is the only one we rely on (binary setup).
-onlyBuiltDependencies:
-  - esbuild
+# pnpm 11 refuses dependency build scripts that are not listed here;
+# esbuild's postinstall (binary setup) is the only one we rely on; lefthook installs its hooks through the prepare script.
+allowBuilds:
+  esbuild: true
+  lefthook: false

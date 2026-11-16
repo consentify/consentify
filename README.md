@@ -236,7 +236,7 @@ The primary APIs above cover most integrations. For tables, the `server` / `clie
 | **Approach** | Headless SDK — you own the UI | Bundled, configurable banner | Hosted widget + dashboard |
 | **Server / SSR API** | Yes — raw `Cookie` / `Set-Cookie` headers | No — browser-only | No — browser-only script |
 | **TypeScript-first** | Yes — typed categories end-to-end | Varies | No SDK |
-| **Bundle size** | < 5 kB gzipped, enforced in CI | up to ~150 kB | External hosted script |
+| **Bundle size** | < 5 kB gzipped, enforced by `pnpm verify` and on release | up to ~150 kB | External hosted script |
 | **Google Consent Mode v2** | Built-in (`enableConsentMode`) | Manual wiring | Usually built-in |
 | **Cost** | Free (MIT) | Free (MIT) | ~$30–$1,100+/month |
 

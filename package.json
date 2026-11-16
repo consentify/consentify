@@ -6,7 +6,7 @@
         "build": "pnpm -r build",
         "check": "pnpm -r check",
         "typecheck": "pnpm --filter @consentify/core build && pnpm -r check",
-        "verify": "pnpm lint && pnpm typecheck && pnpm test",
+        "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm size",
         "lint": "biome lint .",
         "test": "vitest run",
         "test:watch": "vitest",
@@ -29,5 +29,5 @@
         "typescript": "5.9.3",
         "vitest": "^4.1.9"
     },
-    "packageManager": "pnpm@10.34.4"
+    "packageManager": "pnpm@11.20.0"
 }
